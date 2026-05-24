@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <defs>
+    <linearGradient id="pp-apple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9810FA"/>
+      <stop offset="1" stop-color="#C026D3"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="180" height="180" rx="40" fill="url(#pp-apple)"/>
+  <path
+    d="M62 50h38c19 0 32 11.5 32 29 0 18.5-13 30.5-33 30.5H79V135H62V50zm17 15.5v28h19c11 0 17-5.5 17-14 0-9-6-14-17-14H79z"
+    fill="#FFFFFF"
+  />
+</svg>

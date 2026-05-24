@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER — replace with the official Purpura Club wordmark. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64" role="img" aria-label="Purpura Club">
+  <defs>
+    <linearGradient id="pp-wm-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9810FA"/>
+      <stop offset="1" stop-color="#C026D3"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#pp-wm-grad)"/>
+  <path
+    d="M22 18h13.5c6.9 0 11.5 4.1 11.5 10.4 0 6.5-4.7 10.7-11.8 10.7H28v8.9h-6V18zm6 5.6v9.9h6.9c3.9 0 6.1-1.9 6.1-5 0-3-2.1-4.9-6-4.9H28z"
+    fill="#FFFFFF"
+  />
+  <text
+    x="80"
+    y="40"
+    font-family="Geist, ui-sans-serif, system-ui, sans-serif"
+    font-size="22"
+    font-weight="600"
+    letter-spacing="-0.02em"
+    fill="#FFFFFF"
+  >Purpura Club</text>
+  <text
+    x="80"
+    y="56"
+    font-family="Geist, ui-sans-serif, system-ui, sans-serif"
+    font-size="9"
+    font-weight="500"
+    letter-spacing="0.28em"
+    fill="#A1A1AA"
+  >ADMIN</text>
+</svg>

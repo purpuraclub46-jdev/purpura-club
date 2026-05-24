@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(mkdir -p src/common/decorators src/common/filters src/common/interceptors src/common/interfaces src/common/middleware src/common/pipes src/common/utils src/config src/modules/health src/prisma 2>&1)",
+      "Bash(npm run *)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(48\\).toString\\('base64'\\)\\)\")",
+      "Bash(npx prisma *)",
+      "Bash(npx tsc *)",
+      "Bash(npm ls *)",
+      "Bash(curl -sf -o /dev/null http://localhost:3001/login)",
+      "Bash(cat /tmp/login.html)",
+      "Read(//tmp/**)",
+      "Bash(npx next *)",
+      "Bash(curl -sI http://localhost:3011/icon.svg)",
+      "Bash(curl -s -o /tmp/d.html -w \"HTTP %{http_code}  size=%{size_download}\\\\n\" -b \"pp_authenticated=1\" http://localhost:3011/)",
+      "Bash(curl -s -o /tmp/e.html -w \"HTTP %{http_code}  size=%{size_download}\\\\n\" -b \"pp_authenticated=1\" http://localhost:3011/events)",
+      "Bash(curl -s -o /tmp/p.html -w \"HTTP %{http_code}  size=%{size_download}\\\\n\" -b \"pp_authenticated=1\" http://localhost:3011/payments)",
+      "Bash(curl -s -o /tmp/v.html -w \"HTTP %{http_code}  size=%{size_download}\\\\n\" -b \"pp_authenticated=1\" http://localhost:3011/tickets/validate)",
+      "Bash(curl -s -o /dev/null -b \"pp_authenticated=1\" http://localhost:3011/events)",
+      "Bash(curl -s -o /dev/null -b \"pp_authenticated=1\" http://localhost:3011/events/new)",
+      "Bash(curl -s -o /dev/null -b \"pp_authenticated=1\" http://localhost:3011/users)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{N='Path';E={$_.Path}} | Format-Table -AutoSize)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process node)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\louis\\Desktop\\purpura-club\\apps\\api\\src\\common"
+    ]
+  }
+}

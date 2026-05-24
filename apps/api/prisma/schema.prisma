@@ -1,0 +1,363 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─────────────────────────────────────────────
+// IDENTITY
+// ─────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  password     String
+  firstName    String
+  lastName     String
+  role         Role     @default(USER)
+  refreshToken String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries            RaffleEntry[]
+  wonRaffle          Raffle[]            @relation("RaffleWinner")
+  orders             Order[]
+  inventoryMovements InventoryMovement[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// RAFFLES (existing — untouched)
+// ─────────────────────────────────────────────
+
+enum RaffleStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  CANCELLED
+}
+
+enum RaffleVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum EntryType {
+  PURCHASE_REWARD
+  DIRECT_PURCHASE
+  REFERRAL
+  BONUS
+}
+
+enum EntryStatus {
+  PENDING_PAYMENT
+  PAID
+  CANCELLED
+  WINNER
+}
+
+enum PaymentMethod {
+  YAPE
+  FREE
+  MERCADOPAGO
+}
+
+model Raffle {
+  id                String           @id @default(uuid()) @db.Uuid
+  title             String
+  slug              String           @unique
+  description       String           @db.Text
+  bannerImage       String?
+  prizeImage        String?
+  countdown         DateTime?
+  ticketPrice       Decimal          @db.Decimal(10, 2)
+  memberTicketPrice Decimal          @db.Decimal(10, 2)
+  totalTickets      Int
+  soldTickets       Int              @default(0)
+  status            RaffleStatus     @default(DRAFT)
+  visibility        RaffleVisibility @default(PUBLIC)
+  winnerUserId      String?          @db.Uuid
+  startDate         DateTime
+  endDate           DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  winner  User?         @relation("RaffleWinner", fields: [winnerUserId], references: [id], onDelete: SetNull)
+  entries RaffleEntry[]
+
+  @@index([status, visibility])
+  @@index([startDate])
+  @@map("raffles")
+}
+
+model RaffleEntry {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String         @db.Uuid
+  raffleId         String         @db.Uuid
+  ticketNumber     Int
+  type             EntryType      @default(DIRECT_PURCHASE)
+  status           EntryStatus    @default(PAID)
+  paymentMethod    PaymentMethod?
+  paymentReference String?
+  orderId          String?        @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  raffle Raffle @relation(fields: [raffleId], references: [id], onDelete: Cascade)
+  order  Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([raffleId, ticketNumber])
+  @@index([userId, status])
+  @@index([raffleId, status])
+  @@index([raffleId, type])
+  @@index([orderId])
+  @@map("raffle_entries")
+}
+
+// ─────────────────────────────────────────────
+// ECOMMERCE — CATALOG
+// ─────────────────────────────────────────────
+
+enum CategoryGroup {
+  JOYERIA
+  PERFUMES
+  ACCESORIOS
+}
+
+model Category {
+  id       String        @id @default(uuid()) @db.Uuid
+  name     String
+  slug     String        @unique
+  image    String?
+  group    CategoryGroup @default(JOYERIA)
+  order    Int           @default(0)
+  active   Boolean       @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products ProductCategory[]
+
+  @@index([group, active])
+  @@map("categories")
+}
+
+model Product {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String  @unique
+  description String? @db.Text
+  sku         String  @unique
+  barcode     String? @unique
+
+  price       Decimal @db.Decimal(10, 2)
+  memberPrice Decimal @db.Decimal(10, 2)
+  cost        Decimal @db.Decimal(10, 2) @default(0)
+
+  featured Boolean @default(false)
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  images     ProductImage[]
+  categories ProductCategory[]
+  variants   ProductVariant[]
+  inventory  BranchInventory[]
+  movements  InventoryMovement[]
+  orderItems OrderItem[]
+
+  @@index([active, featured])
+  @@index([sku])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @db.Uuid
+  url       String
+  order     Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, order])
+  @@map("product_images")
+}
+
+model ProductCategory {
+  productId  String @db.Uuid
+  categoryId String @db.Uuid
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([productId, categoryId])
+  @@index([categoryId])
+  @@map("product_categories")
+}
+
+model ProductVariant {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @db.Uuid
+  name      String
+  value     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, name, value])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+// ─────────────────────────────────────────────
+// INVENTORY — MULTI-BRANCH
+// ─────────────────────────────────────────────
+
+model Branch {
+  id      String  @id @default(uuid()) @db.Uuid
+  name    String
+  slug    String  @unique
+  address String?
+  phone   String?
+  active  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventory BranchInventory[]
+  movements InventoryMovement[]
+  orders    Order[]
+
+  @@index([active])
+  @@map("branches")
+}
+
+model BranchInventory {
+  id            String @id @default(uuid()) @db.Uuid
+  branchId      String @db.Uuid
+  productId     String @db.Uuid
+  stock         Int    @default(0)
+  reservedStock Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, productId])
+  @@index([productId])
+  @@map("branch_inventory")
+}
+
+enum InventoryMovementType {
+  SALE
+  RESTOCK
+  TRANSFER
+  ADJUSTMENT
+  LOSS
+}
+
+model InventoryMovement {
+  id              String                @id @default(uuid()) @db.Uuid
+  branchId        String                @db.Uuid
+  productId       String                @db.Uuid
+  quantity        Int
+  type            InventoryMovementType
+  reason          String?
+  createdByUserId String?               @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  branch        Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdByUser User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([branchId, createdAt])
+  @@index([productId, createdAt])
+  @@index([type, createdAt])
+  @@map("inventory_movements")
+}
+
+// ─────────────────────────────────────────────
+// ECOMMERCE — ORDERS
+// ─────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING
+  PAID
+  CANCELLED
+  REFUNDED
+}
+
+enum OrderPaymentMethod {
+  MERCADOPAGO
+  YAPE
+  CASH
+  CARD
+}
+
+model Order {
+  id            String             @id @default(uuid()) @db.Uuid
+  number        String             @unique
+  userId        String?            @db.Uuid
+  branchId      String?            @db.Uuid
+  subtotal      Decimal            @db.Decimal(10, 2)
+  discount      Decimal            @db.Decimal(10, 2) @default(0)
+  total         Decimal            @db.Decimal(10, 2)
+  paymentMethod OrderPaymentMethod
+  status        OrderStatus        @default(PENDING)
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  branch        Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+  raffleEntries RaffleEntry[]
+
+  @@index([userId, status])
+  @@index([branchId, status])
+  @@index([status, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  orderId   String  @db.Uuid
+  productId String  @db.Uuid
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  subtotal  Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
