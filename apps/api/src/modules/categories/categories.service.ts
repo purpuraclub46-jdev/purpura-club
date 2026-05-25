@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -16,7 +17,7 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import {
   CategoriesRepository,
-  CategoryWithCount,
+  CategoryWithRelations,
 } from './repositories/categories.repository';
 
 @Injectable()
@@ -28,6 +29,10 @@ export class CategoriesService {
   async create(dto: CreateCategoryDto): Promise<CategoryResponseDto> {
     const slug = await this.resolveSlug(dto.slug, dto.name);
 
+    if (dto.parentId) {
+      await this.assertParentExists(dto.parentId);
+    }
+
     try {
       const created = await this.repository.create({
         name: dto.name,
@@ -36,10 +41,14 @@ export class CategoriesService {
         group: dto.group,
         order: dto.order ?? 0,
         active: dto.active ?? true,
+        ...(dto.parentId
+          ? { parent: { connect: { id: dto.parentId } } }
+          : {}),
       });
 
       this.logger.log(`Category created ${created.id} (${created.slug})`);
-      return this.toResponse({ ...created, _count: { products: 0 } });
+      const fresh = await this.repository.findById(created.id);
+      return this.toResponse(fresh!);
     } catch (error) {
       throw this.translateUniqueSlug(error);
     }
@@ -63,19 +72,33 @@ export class CategoriesService {
       slug = normalized;
     }
 
+    const data: Prisma.CategoryUpdateInput = {
+      name: dto.name,
+      slug,
+      image: dto.image,
+      group: dto.group,
+      order: dto.order,
+      active: dto.active,
+    };
+
+    if (dto.parentId !== undefined) {
+      if (dto.parentId === null) {
+        data.parent = { disconnect: true };
+      } else {
+        if (dto.parentId === id) {
+          throw new BadRequestException(
+            'Una categoría no puede ser su propio padre',
+          );
+        }
+        await this.assertParentExists(dto.parentId);
+        data.parent = { connect: { id: dto.parentId } };
+      }
+    }
+
     try {
-      const updated = await this.repository.update(id, {
-        name: dto.name,
-        slug,
-        image: dto.image,
-        group: dto.group,
-        order: dto.order,
-        active: dto.active,
-      });
-      return this.toResponse({
-        ...updated,
-        _count: existing._count,
-      });
+      await this.repository.update(id, data);
+      const updated = await this.repository.findById(id);
+      return this.toResponse(updated!);
     } catch (error) {
       throw this.translateUniqueSlug(error);
     }
@@ -90,6 +113,14 @@ export class CategoriesService {
         error.code === 'P2025'
       ) {
         throw new NotFoundException('Categoría no encontrada');
+      }
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new ConflictException(
+          'No se puede eliminar: la categoría tiene subcategorías o productos asociados',
+        );
       }
       throw error;
     }
@@ -113,6 +144,11 @@ export class CategoriesService {
     if (query.search) {
       where.name = { contains: query.search, mode: 'insensitive' };
     }
+    if (query.parentId) {
+      where.parentId = query.parentId;
+    } else if (query.rootOnly) {
+      where.parentId = null;
+    }
 
     const { items, total } = await this.repository.findMany({
       where,
@@ -124,6 +160,13 @@ export class CategoriesService {
       items: items.map((c) => this.toResponse(c)),
       meta: buildPaginationMeta(total, query.page, query.limit),
     };
+  }
+
+  private async assertParentExists(parentId: string): Promise<void> {
+    const exists = await this.repository.findById(parentId);
+    if (!exists) {
+      throw new NotFoundException('Categoría padre no encontrada');
+    }
   }
 
   private async resolveSlug(
@@ -161,7 +204,7 @@ export class CategoriesService {
     return error instanceof Error ? error : new Error(String(error));
   }
 
-  private toResponse(category: CategoryWithCount): CategoryResponseDto {
+  private toResponse(category: CategoryWithRelations): CategoryResponseDto {
     return {
       id: category.id,
       name: category.name,
@@ -170,6 +213,15 @@ export class CategoriesService {
       group: category.group,
       order: category.order,
       active: category.active,
+      parentId: category.parentId,
+      parent: category.parent
+        ? {
+            id: category.parent.id,
+            name: category.parent.name,
+            slug: category.parent.slug,
+          }
+        : null,
+      childrenCount: category._count?.children ?? 0,
       productsCount: category._count?.products ?? 0,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,

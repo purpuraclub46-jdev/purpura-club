@@ -38,10 +38,13 @@ export class OrderQueryDto {
   @IsEnum(OrderPaymentMethod)
   paymentMethod?: OrderPaymentMethod;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Filtrar por ubicación de inventario (ecommerce o sucursal).',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  inventoryLocationId?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

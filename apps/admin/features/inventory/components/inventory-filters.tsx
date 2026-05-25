@@ -9,17 +9,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
-import { useBranchesList } from "@/features/branches/hooks/use-branches";
-import type { InventoryListQuery } from "../types";
+import { useLocationsList } from "@/features/locations/hooks/use-locations";
+import { LOCATION_TYPE_LABEL } from "@/features/locations/types";
+import type { StockListQuery } from "../types";
 
 interface Props {
-  value: InventoryListQuery;
-  onChange: (next: InventoryListQuery) => void;
+  value: StockListQuery;
+  onChange: (next: StockListQuery) => void;
 }
 
 export function InventoryFilters({ value, onChange }: Props) {
-  const { data } = useBranchesList({ page: 1, limit: 100 });
-  const branches = data?.items ?? [];
+  const { data } = useLocationsList({ page: 1, limit: 100 });
+  const locations = data?.items ?? [];
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -36,23 +37,23 @@ export function InventoryFilters({ value, onChange }: Props) {
       </div>
 
       <Select
-        value={value.branchId ?? "ALL"}
+        value={value.inventoryLocationId ?? "ALL"}
         onValueChange={(v) =>
           onChange({
             ...value,
             page: 1,
-            branchId: v === "ALL" ? undefined : v,
+            inventoryLocationId: v === "ALL" ? undefined : v,
           })
         }
       >
-        <SelectTrigger className="w-56">
-          <SelectValue placeholder="Sucursal" />
+        <SelectTrigger className="w-64">
+          <SelectValue placeholder="Ubicación" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="ALL">Todas las sucursales</SelectItem>
-          {branches.map((b) => (
-            <SelectItem key={b.id} value={b.id}>
-              {b.name}
+          <SelectItem value="ALL">Todas las ubicaciones</SelectItem>
+          {locations.map((l) => (
+            <SelectItem key={l.id} value={l.id}>
+              {l.name} · {LOCATION_TYPE_LABEL[l.type]}
             </SelectItem>
           ))}
         </SelectContent>
@@ -69,7 +70,7 @@ export function InventoryFilters({ value, onChange }: Props) {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Todo el stock</SelectItem>
-          <SelectItem value="low">Stock bajo (≤ 5)</SelectItem>
+          <SelectItem value="low">Sólo stock bajo</SelectItem>
         </SelectContent>
       </Select>
     </div>

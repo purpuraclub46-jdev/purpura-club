@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/shared/ui/button";
@@ -27,6 +28,7 @@ import {
   type CategoryFormValues,
 } from "../schemas/category.schema";
 import {
+  useCategoriesList,
   useCreateCategory,
   useUpdateCategory,
 } from "../hooks/use-categories";
@@ -35,6 +37,8 @@ import type {
   CreateCategoryPayload,
   UpdateCategoryPayload,
 } from "../types";
+
+const NO_PARENT = "__none__";
 
 interface CategoryDialogProps {
   open: boolean;
@@ -49,6 +53,8 @@ const toPayload = (values: CategoryFormValues): CreateCategoryPayload => ({
   group: values.group,
   order: values.order ?? 0,
   active: values.active ?? true,
+  parentId:
+    values.parentId && values.parentId !== NO_PARENT ? values.parentId : null,
 });
 
 export function CategoryDialog({
@@ -59,6 +65,13 @@ export function CategoryDialog({
   const mode = initial ? "edit" : "create";
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory(initial?.id ?? "");
+  const { data: allCategories } = useCategoriesList({ page: 1, limit: 200 });
+
+  const parentOptions = useMemo(
+    () =>
+      (allCategories?.items ?? []).filter((cat) => cat.id !== initial?.id),
+    [allCategories, initial?.id],
+  );
 
   const {
     register,
@@ -76,11 +89,13 @@ export function CategoryDialog({
       group: initial?.group ?? "JOYERIA",
       order: initial?.order ?? 0,
       active: initial?.active ?? true,
+      parentId: initial?.parentId ?? NO_PARENT,
     },
   });
 
   const group = watch("group");
   const active = watch("active");
+  const parentId = watch("parentId");
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -114,7 +129,8 @@ export function CategoryDialog({
             {mode === "create" ? "Nueva categoría" : "Editar categoría"}
           </DialogTitle>
           <DialogDescription>
-            Organiza el catálogo en grupos: Joyería, Perfumes y Accesorios.
+            Organiza el catálogo en grupos jerárquicos: Joyería, Perfumes y
+            Accesorios.
           </DialogDescription>
         </DialogHeader>
 
@@ -174,6 +190,33 @@ export function CategoryDialog({
             </FormField>
 
             <FormField
+              label="Categoría padre"
+              description="Déjala vacía si es una categoría raíz."
+            >
+              <Select
+                value={parentId ?? NO_PARENT}
+                onValueChange={(v) =>
+                  setValue("parentId", v, { shouldValidate: true })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Sin padre" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PARENT}>Sin padre (raíz)</SelectItem>
+                  {parentOptions.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id}>
+                      {cat.parent ? `${cat.parent.name} › ` : ""}
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField
               label="Orden"
               htmlFor="order"
               description="Menor número se muestra primero."
@@ -185,6 +228,23 @@ export function CategoryDialog({
                 min={0}
                 {...register("order", { valueAsNumber: true })}
               />
+            </FormField>
+
+            <FormField label="Estado">
+              <Select
+                value={active ? "true" : "false"}
+                onValueChange={(v) =>
+                  setValue("active", v === "true", { shouldValidate: true })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="true">Activa</SelectItem>
+                  <SelectItem value="false">Inactiva</SelectItem>
+                </SelectContent>
+              </Select>
             </FormField>
           </div>
 
@@ -199,23 +259,6 @@ export function CategoryDialog({
               placeholder="https://…"
               {...register("image")}
             />
-          </FormField>
-
-          <FormField label="Estado">
-            <Select
-              value={active ? "true" : "false"}
-              onValueChange={(v) =>
-                setValue("active", v === "true", { shouldValidate: true })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="true">Activa</SelectItem>
-                <SelectItem value="false">Inactiva</SelectItem>
-              </SelectContent>
-            </Select>
           </FormField>
         </form>
 

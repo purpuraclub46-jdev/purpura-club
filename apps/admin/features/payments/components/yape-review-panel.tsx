@@ -123,11 +123,12 @@ export function YapeReviewPanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Yape — cola de revisión manual</CardTitle>
+        <CardTitle>Yape — pagos manuales de tickets de sorteos</CardTitle>
         <CardDescription>
-          Las participaciones pagadas con Yape permanecen <em>pendientes</em>{" "}
-          hasta que un administrador apruebe el voucher subido. La carga de
-          vouchers forma parte de la próxima entrega del backend.
+          Canal exclusivo para tickets de sorteos. Cada participación queda{" "}
+          <em>pendiente</em> hasta que un administrador valide el voucher
+          subido por el participante. Yape <strong>no</strong> se usa para el
+          ecommerce.
         </CardDescription>
       </CardHeader>
       <CardContent>

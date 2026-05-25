@@ -10,8 +10,11 @@ import {
   Paginated,
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
+import { PrismaService } from '../../prisma/prisma.service';
 import { generateUniqueSlug, slugify } from '../../common/utils/slug.util';
+import { computeProductPricing } from '../../common/utils/pricing.util';
 import { CreateProductDto } from './dto/create-product.dto';
+import { ProductAvailabilityInputDto } from './dto/product-availability.dto';
 import {
   ProductQueryDto,
   ProductSort,
@@ -23,21 +26,42 @@ import {
   ProductWithRelations,
 } from './repositories/products.repository';
 
+interface NormalizedAvailability {
+  inventoryLocationId: string;
+  active: boolean;
+  initialStock: number;
+  minimumStock: number;
+}
+
+interface ToResponseOptions {
+  isMember?: boolean;
+}
+
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
 
-  constructor(private readonly repository: ProductsRepository) {}
+  constructor(
+    private readonly repository: ProductsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  async create(dto: CreateProductDto): Promise<ProductResponseDto> {
-    this.assertPricing(dto.price, dto.memberPrice);
+  async create(
+    dto: CreateProductDto,
+    actorUserId?: string,
+  ): Promise<ProductResponseDto> {
+    this.assertDiscount(dto);
 
     if (await this.repository.findBySku(dto.sku)) {
       throw new ConflictException('Ya existe un producto con este SKU');
     }
     if (dto.barcode && (await this.repository.findByBarcode(dto.barcode))) {
-      throw new ConflictException('Ya existe un producto con este código de barras');
+      throw new ConflictException(
+        'Ya existe un producto con este código de barras',
+      );
     }
+
+    const availability = await this.normalizeAvailability(dto.availability);
 
     const slug = await this.resolveSlug(dto.slug, dto.name);
 
@@ -50,14 +74,26 @@ export class ProductsService {
           sku: dto.sku,
           barcode: dto.barcode ?? null,
           price: new Prisma.Decimal(dto.price),
-          memberPrice: new Prisma.Decimal(dto.memberPrice),
           cost: new Prisma.Decimal(dto.cost ?? 0),
+          discountPercentage:
+            dto.discountPercentage !== undefined
+              ? new Prisma.Decimal(dto.discountPercentage)
+              : null,
+          discountActive: dto.discountActive ?? false,
+          discountStartsAt: dto.discountStartsAt
+            ? new Date(dto.discountStartsAt)
+            : null,
+          discountEndsAt: dto.discountEndsAt
+            ? new Date(dto.discountEndsAt)
+            : null,
           featured: dto.featured ?? false,
           active: dto.active ?? true,
         },
         categoryIds: dto.categoryIds ?? [],
         images: dto.images ?? [],
         variants: dto.variants ?? [],
+        availability,
+        createdByUserId: actorUserId,
       });
 
       this.logger.log(`Product created ${created.id} (${created.slug})`);
@@ -76,11 +112,12 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const price =
-      dto.price ?? this.decimalToNumber(existing.price);
-    const memberPrice =
-      dto.memberPrice ?? this.decimalToNumber(existing.memberPrice);
-    this.assertPricing(price, memberPrice);
+    this.assertDiscount({
+      discountPercentage: dto.discountPercentage,
+      discountActive: dto.discountActive,
+      discountStartsAt: dto.discountStartsAt,
+      discountEndsAt: dto.discountEndsAt,
+    });
 
     if (dto.sku !== undefined && dto.sku !== existing.sku) {
       const found = await this.repository.findBySku(dto.sku);
@@ -111,6 +148,15 @@ export class ProductsService {
       slug = normalized;
     }
 
+    const availability =
+      dto.availability !== undefined
+        ? (await this.normalizeAvailability(dto.availability)).map((a) => ({
+            inventoryLocationId: a.inventoryLocationId,
+            active: a.active,
+            minimumStock: a.minimumStock,
+          }))
+        : undefined;
+
     try {
       const updated = await this.repository.updateWithRelations({
         id,
@@ -122,18 +168,32 @@ export class ProductsService {
           barcode: dto.barcode,
           price:
             dto.price !== undefined ? new Prisma.Decimal(dto.price) : undefined,
-          memberPrice:
-            dto.memberPrice !== undefined
-              ? new Prisma.Decimal(dto.memberPrice)
-              : undefined,
           cost:
             dto.cost !== undefined ? new Prisma.Decimal(dto.cost) : undefined,
+          discountPercentage:
+            dto.discountPercentage !== undefined
+              ? new Prisma.Decimal(dto.discountPercentage)
+              : undefined,
+          discountActive: dto.discountActive,
+          discountStartsAt:
+            dto.discountStartsAt !== undefined
+              ? dto.discountStartsAt
+                ? new Date(dto.discountStartsAt)
+                : null
+              : undefined,
+          discountEndsAt:
+            dto.discountEndsAt !== undefined
+              ? dto.discountEndsAt
+                ? new Date(dto.discountEndsAt)
+                : null
+              : undefined,
           featured: dto.featured,
           active: dto.active,
         },
         categoryIds: dto.categoryIds,
         images: dto.images,
         variants: dto.variants,
+        availability,
       });
 
       return this.toResponse(updated);
@@ -164,24 +224,39 @@ export class ProductsService {
     }
   }
 
-  async findById(id: string): Promise<ProductResponseDto> {
+  async findById(
+    id: string,
+    options: ToResponseOptions = {},
+  ): Promise<ProductResponseDto> {
     const product = await this.repository.findById(id);
     if (!product) {
       throw new NotFoundException('Producto no encontrado');
     }
-    return this.toResponse(product);
+    return this.toResponse(product, options);
   }
 
-  async findBySlugPublic(slug: string): Promise<ProductResponseDto> {
+  async findBySlugPublic(
+    slug: string,
+    options: ToResponseOptions = {},
+  ): Promise<ProductResponseDto> {
     const product = await this.repository.findBySlug(slug);
     if (!product || !product.active) {
       throw new NotFoundException('Producto no encontrado');
     }
-    return this.toResponse(product);
+    const hasEcommerceAvailability = product.availability.some(
+      (a) => a.active && a.location.type === 'ECOMMERCE',
+    );
+    if (!hasEcommerceAvailability) {
+      throw new NotFoundException('Producto no disponible');
+    }
+    return this.toResponse(product, options);
   }
 
   async findMany(
-    query: ProductQueryDto,
+    query: ProductQueryDto & {
+      availableForType?: 'ECOMMERCE' | 'SUCURSAL' | 'ALMACEN';
+    },
+    options: ToResponseOptions = {},
   ): Promise<Paginated<ProductResponseDto>> {
     const where: Prisma.ProductWhereInput = {};
 
@@ -190,6 +265,22 @@ export class ProductsService {
 
     if (query.categoryId) {
       where.categories = { some: { categoryId: query.categoryId } };
+    }
+
+    if (query.inventoryLocationId) {
+      where.availability = {
+        some: {
+          inventoryLocationId: query.inventoryLocationId,
+          active: true,
+        },
+      };
+    } else if (query.availableForType) {
+      where.availability = {
+        some: {
+          active: true,
+          location: { active: true, type: query.availableForType },
+        },
+      };
     }
 
     if (query.search) {
@@ -208,7 +299,7 @@ export class ProductsService {
     });
 
     return {
-      items: items.map((p) => this.toResponse(p)),
+      items: items.map((p) => this.toResponse(p, options)),
       meta: buildPaginationMeta(total, query.page, query.limit),
     };
   }
@@ -249,12 +340,86 @@ export class ProductsService {
     throw new ConflictException('No se pudo generar un slug único');
   }
 
-  private assertPricing(price: number, memberPrice: number): void {
-    if (memberPrice > price) {
+  private assertDiscount(input: {
+    discountPercentage?: number | null;
+    discountActive?: boolean;
+    discountStartsAt?: string | null;
+    discountEndsAt?: string | null;
+  }): void {
+    const {
+      discountPercentage,
+      discountActive,
+      discountStartsAt,
+      discountEndsAt,
+    } = input;
+
+    if (
+      discountActive === true &&
+      (discountPercentage === undefined ||
+        discountPercentage === null ||
+        discountPercentage <= 0)
+    ) {
       throw new BadRequestException(
-        'El precio para miembros no puede ser mayor al precio normal',
+        'Para activar la oferta debes indicar un porcentaje mayor a 0',
       );
     }
+
+    if (discountStartsAt && discountEndsAt) {
+      const start = new Date(discountStartsAt);
+      const end = new Date(discountEndsAt);
+      if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+        if (start > end) {
+          throw new BadRequestException(
+            'La fecha de inicio de la oferta no puede ser posterior a la fecha de fin',
+          );
+        }
+      }
+    }
+  }
+
+  private async normalizeAvailability(
+    input?: ProductAvailabilityInputDto[],
+  ): Promise<NormalizedAvailability[]> {
+    if (!input || input.length === 0) return [];
+
+    const byLocation = new Map<string, NormalizedAvailability>();
+    for (const item of input) {
+      const existing = byLocation.get(item.inventoryLocationId);
+      const normalized: NormalizedAvailability = {
+        inventoryLocationId: item.inventoryLocationId,
+        active: item.active ?? true,
+        initialStock: item.initialStock ?? 0,
+        minimumStock: item.minimumStock ?? 0,
+      };
+      byLocation.set(item.inventoryLocationId, {
+        ...existing,
+        ...normalized,
+      });
+    }
+
+    const ids = Array.from(byLocation.keys());
+    const locations = await this.prisma.inventoryLocation.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, active: true, name: true },
+    });
+    const foundIds = new Set(locations.map((l) => l.id));
+
+    for (const id of ids) {
+      if (!foundIds.has(id)) {
+        throw new BadRequestException(
+          `Ubicación de inventario no encontrada: ${id}`,
+        );
+      }
+    }
+    for (const loc of locations) {
+      if (!loc.active) {
+        throw new BadRequestException(
+          `La ubicación "${loc.name}" no está activa`,
+        );
+      }
+    }
+
+    return Array.from(byLocation.values());
   }
 
   private translateUniqueError(error: unknown): Error {
@@ -277,14 +442,32 @@ export class ProductsService {
     return Number(value);
   }
 
-  private toResponse(product: ProductWithRelations): ProductResponseDto {
-    const totalStock = product.inventory.reduce(
+  private toResponse(
+    product: ProductWithRelations,
+    options: ToResponseOptions = {},
+  ): ProductResponseDto {
+    const stockByLocation = new Map(
+      product.stock.map((s) => [s.inventoryLocationId, s]),
+    );
+
+    const totalStock = product.stock.reduce(
       (sum, inv) => sum + inv.stock,
       0,
     );
-    const totalReserved = product.inventory.reduce(
+    const totalReserved = product.stock.reduce(
       (sum, inv) => sum + inv.reservedStock,
       0,
+    );
+
+    const pricing = computeProductPricing(
+      {
+        price: product.price,
+        discountPercentage: product.discountPercentage,
+        discountActive: product.discountActive,
+        discountStartsAt: product.discountStartsAt,
+        discountEndsAt: product.discountEndsAt,
+      },
+      { isMember: options.isMember ?? false },
     );
 
     return {
@@ -294,9 +477,15 @@ export class ProductsService {
       description: product.description,
       sku: product.sku,
       barcode: product.barcode,
-      price: this.decimalToNumber(product.price),
-      memberPrice: this.decimalToNumber(product.memberPrice),
+      price: pricing.price,
       cost: this.decimalToNumber(product.cost),
+      discountPercentage: pricing.discountPercentage,
+      discountActive: pricing.discountActive,
+      discountStartsAt: product.discountStartsAt,
+      discountEndsAt: product.discountEndsAt,
+      salePrice: pricing.salePrice,
+      memberPrice: pricing.memberPrice,
+      finalPrice: pricing.finalPrice,
       featured: product.featured,
       active: product.active,
       images: product.images.map((img) => ({
@@ -314,6 +503,18 @@ export class ProductsService {
         name: rel.category.name,
         slug: rel.category.slug,
       })),
+      availability: product.availability.map((a) => {
+        const inv = stockByLocation.get(a.inventoryLocationId);
+        return {
+          inventoryLocationId: a.inventoryLocationId,
+          locationName: a.location.name,
+          locationSlug: a.location.slug,
+          locationType: a.location.type,
+          active: a.active,
+          stock: inv?.stock ?? 0,
+          minimumStock: inv?.minimumStock ?? 0,
+        };
+      }),
       inventory: {
         totalStock,
         totalReserved,

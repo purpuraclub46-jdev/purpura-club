@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  IsUUID,
   Matches,
   MaxLength,
   Min,
@@ -68,4 +69,13 @@ export class CreateCategoryDto {
   @Type(() => Boolean)
   @IsBoolean()
   active?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Id de la categoría padre (para jerarquía).',
+    format: 'uuid',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID()
+  parentId?: string | null;
 }

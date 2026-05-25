@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/shared/ui/data-table";
 import { formatCurrency, formatDate } from "@/shared/lib/format";
+import { LocationTypeBadge } from "@/features/locations/components/location-type-badge";
 import {
   OrderPaymentBadge,
   OrderStatusBadge,
@@ -53,13 +54,16 @@ export function OrdersTable({ data, isLoading, meta, onPageChange }: Props) {
         ),
     },
     {
-      key: "branch",
-      header: "Sucursal",
+      key: "location",
+      header: "Ubicación",
       cell: (row) =>
-        row.branch ? (
-          row.branch.name
+        row.location ? (
+          <div className="flex flex-col gap-1">
+            <span className="truncate text-xs">{row.location.name}</span>
+            <LocationTypeBadge type={row.location.type} />
+          </div>
         ) : (
-          <span className="text-xs text-muted-foreground">Online</span>
+          <span className="text-xs text-muted-foreground">Sin ubicación</span>
         ),
     },
     {

@@ -2,33 +2,40 @@ import { Injectable } from '@nestjs/common';
 import { Category, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
+const categoryInclude = Prisma.validator<Prisma.CategoryInclude>()({
+  parent: { select: { id: true, name: true, slug: true } },
+  _count: { select: { products: true, children: true } },
+});
+
+export type CategoryWithRelations = Prisma.CategoryGetPayload<{
+  include: typeof categoryInclude;
+}>;
+
 export interface FindCategoriesOptions {
   where: Prisma.CategoryWhereInput;
   page: number;
   limit: number;
 }
 
-export interface CategoryWithCount extends Category {
-  _count: { products: number };
-}
-
 export interface FindCategoriesResult {
-  items: CategoryWithCount[];
+  items: CategoryWithRelations[];
   total: number;
 }
 
 @Injectable()
 export class CategoriesRepository {
+  public readonly include = categoryInclude;
+
   constructor(private readonly prisma: PrismaService) {}
 
   create(data: Prisma.CategoryCreateInput): Promise<Category> {
     return this.prisma.category.create({ data });
   }
 
-  findById(id: string): Promise<CategoryWithCount | null> {
+  findById(id: string): Promise<CategoryWithRelations | null> {
     return this.prisma.category.findUnique({
       where: { id },
-      include: { _count: { select: { products: true } } },
+      include: categoryInclude,
     });
   }
 
@@ -46,7 +53,7 @@ export class CategoriesRepository {
         skip,
         take: limit,
         orderBy: [{ group: 'asc' }, { order: 'asc' }, { name: 'asc' }],
-        include: { _count: { select: { products: true } } },
+        include: categoryInclude,
       }),
       this.prisma.category.count({ where }),
     ]);

@@ -17,10 +17,19 @@ export class PrismaService
   constructor(configService: ConfigService) {
     const isProduction = configService.get<string>('app.nodeEnv') === 'production';
 
+    // Preferimos DIRECT_URL para el runtime cuando esté disponible (postgres
+    // directo, sin pgbouncer). Pgbouncer en modo transaction rompe sesiones
+    // con múltiples awaits encadenados (error P2028). En serverless/edge
+    // se puede forzar la pooled URL con USE_POOLED_DB=true.
+    const usePooled = process.env.USE_POOLED_DB === 'true';
+    const direct = configService.get<string>('database.directUrl');
+    const pooled = configService.get<string>('database.url');
+    const runtimeUrl = !usePooled && direct ? direct : pooled;
+
     super({
       datasources: {
         db: {
-          url: configService.get<string>('database.url'),
+          url: runtimeUrl,
         },
       },
       log: isProduction

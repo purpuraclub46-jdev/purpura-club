@@ -7,6 +7,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -47,4 +48,22 @@ export class CategoryQueryDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filtrar por categoría padre (uuid).',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsUUID()
+  parentId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Si es true, devuelve sólo categorías raíz (sin padre).',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value === 'true' : Boolean(value),
+  )
+  @IsBoolean()
+  rootOnly?: boolean;
 }

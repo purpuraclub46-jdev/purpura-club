@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { DataTable, type DataTableColumn } from "@/shared/ui/data-table";
 import { formatDate } from "@/shared/lib/format";
+import { LocationTypeBadge } from "@/features/locations/components/location-type-badge";
 import { MovementTypeBadge } from "./movement-type-badge";
 import type { InventoryMovementEntity } from "../types";
 import type { PaginationMeta } from "@/types/api";
@@ -42,9 +44,14 @@ export function MovementsTable({ data, isLoading, meta, onPageChange }: Props) {
       ),
     },
     {
-      key: "branch",
-      header: "Sucursal",
-      cell: (row) => row.branchName,
+      key: "location",
+      header: "Ubicación",
+      cell: (row) => (
+        <div className="flex flex-col gap-1">
+          <span className="truncate">{row.locationName}</span>
+          <LocationTypeBadge type={row.locationType} />
+        </div>
+      ),
     },
     {
       key: "quantity",
@@ -71,7 +78,16 @@ export function MovementsTable({ data, isLoading, meta, onPageChange }: Props) {
       header: "Motivo",
       cell: (row) => (
         <span className="text-xs text-muted-foreground">
-          {row.reason ?? "—"}
+          {row.transferNumber ? (
+            <Link
+              href={`/transferencias/${row.transferId}`}
+              className="text-foreground hover:text-primary"
+            >
+              {row.transferNumber}
+            </Link>
+          ) : (
+            (row.reason ?? "—")
+          )}
         </span>
       ),
     },
@@ -93,7 +109,7 @@ export function MovementsTable({ data, isLoading, meta, onPageChange }: Props) {
       isLoading={isLoading}
       rowKey={(row) => row.id}
       emptyTitle="Aún no hay movimientos"
-      emptyDescription="Los ajustes, transferencias y ventas aparecerán aquí."
+      emptyDescription="Los ajustes, transferencias, ventas y reservas aparecerán aquí."
       meta={meta}
       onPageChange={onPageChange}
     />

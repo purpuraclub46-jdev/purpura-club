@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -10,14 +11,18 @@ import databaseConfig from './config/database.config';
 import { validateEnv } from './config/env.validation';
 import swaggerConfig from './config/swagger.config';
 import { AuthModule } from './modules/auth/auth.module';
-import { BranchesModule } from './modules/branches/branches.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { EmailsModule } from './modules/emails/emails.module';
 import { HealthModule } from './modules/health/health.module';
+import { InventoryLocationsModule } from './modules/inventory-locations/inventory-locations.module';
+import { InventoryTransfersModule } from './modules/inventory-transfers/inventory-transfers.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { MembershipsModule } from './modules/memberships/memberships.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { ProductsModule } from './modules/products/products.module';
 import { RaffleEntriesModule } from './modules/raffle-entries/raffle-entries.module';
 import { RafflesModule } from './modules/raffles/raffles.module';
+import { ReferralsModule } from './modules/referrals/referrals.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -30,14 +35,19 @@ import { PrismaModule } from './prisma/prisma.module';
       load: [appConfig, authConfig, databaseConfig, swaggerConfig],
       validate: validateEnv,
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
+    EmailsModule,
+    MembershipsModule,
+    ReferralsModule,
     RafflesModule,
     RaffleEntriesModule,
     CategoriesModule,
     ProductsModule,
-    BranchesModule,
+    InventoryLocationsModule,
     InventoryModule,
+    InventoryTransfersModule,
     OrdersModule,
     HealthModule,
   ],

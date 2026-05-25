@@ -1,3 +1,5 @@
+import type { InventoryLocationType } from "@/types/api";
+
 export interface ProductImage {
   id: string;
   url: string;
@@ -21,6 +23,16 @@ export interface ProductInventorySummary {
   totalReserved: number;
 }
 
+export interface ProductAvailabilityEntry {
+  inventoryLocationId: string;
+  locationName: string;
+  locationSlug: string;
+  locationType: InventoryLocationType;
+  active: boolean;
+  stock: number;
+  minimumStock: number;
+}
+
 export interface ProductEntity {
   id: string;
   name: string;
@@ -29,13 +41,25 @@ export interface ProductEntity {
   sku: string;
   barcode: string | null;
   price: number;
-  memberPrice: number;
   cost: number;
+  /** Porcentaje configurado (0-100). null si no aplica. */
+  discountPercentage: number | null;
+  /** true si está activado Y la ventana de fechas vigente. */
+  discountActive: boolean;
+  discountStartsAt: string | null;
+  discountEndsAt: string | null;
+  /** Precio resultante con descuento aplicado. null si no hay oferta vigente. */
+  salePrice: number | null;
+  /** Precio con descuento adicional del Club. Solo != null si miembro Y oferta vigente. */
+  memberPrice: number | null;
+  /** Precio final visible al solicitante actual (memberPrice ?? salePrice ?? price). */
+  finalPrice: number;
   featured: boolean;
   active: boolean;
   images: ProductImage[];
   variants: ProductVariant[];
   categories: ProductCategoryRef[];
+  availability: ProductAvailabilityEntry[];
   inventory: ProductInventorySummary;
   createdAt: string;
   updatedAt: string;
@@ -54,6 +78,7 @@ export interface ProductListQuery {
   limit?: number;
   search?: string;
   categoryId?: string;
+  inventoryLocationId?: string;
   active?: boolean;
   featured?: boolean;
   sort?: ProductSort;
@@ -69,6 +94,14 @@ export interface ProductVariantPayload {
   value: string;
 }
 
+export interface ProductAvailabilityPayload {
+  inventoryLocationId: string;
+  active?: boolean;
+  /** Solo se usa al crear el producto. En update se ignora. */
+  initialStock?: number;
+  minimumStock?: number;
+}
+
 export interface CreateProductPayload {
   name: string;
   slug?: string;
@@ -76,13 +109,17 @@ export interface CreateProductPayload {
   sku: string;
   barcode?: string;
   price: number;
-  memberPrice: number;
   cost?: number;
+  discountPercentage?: number;
+  discountActive?: boolean;
+  discountStartsAt?: string;
+  discountEndsAt?: string;
   featured?: boolean;
   active?: boolean;
   categoryIds?: string[];
   images?: ProductImagePayload[];
   variants?: ProductVariantPayload[];
+  availability?: ProductAvailabilityPayload[];
 }
 
 export type UpdateProductPayload = Partial<CreateProductPayload>;

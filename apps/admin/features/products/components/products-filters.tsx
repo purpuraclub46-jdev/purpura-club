@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/shared/ui/select";
 import { useCategoriesList } from "@/features/categories/hooks/use-categories";
+import { useLocationsList } from "@/features/locations/hooks/use-locations";
 import {
   PRODUCT_SORT_LABEL,
   type ProductListQuery,
@@ -33,6 +34,12 @@ const SORTS: ProductSort[] = [
 export function ProductsFilters({ value, onChange }: Props) {
   const { data } = useCategoriesList({ page: 1, limit: 100, active: true });
   const categories = data?.items ?? [];
+  const { data: locationsData } = useLocationsList({
+    page: 1,
+    limit: 100,
+    active: true,
+  });
+  const locations = locationsData?.items ?? [];
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -66,6 +73,29 @@ export function ProductsFilters({ value, onChange }: Props) {
           {categories.map((c) => (
             <SelectItem key={c.id} value={c.id}>
               {c.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={value.inventoryLocationId ?? "ALL"}
+        onValueChange={(v) =>
+          onChange({
+            ...value,
+            page: 1,
+            inventoryLocationId: v === "ALL" ? undefined : v,
+          })
+        }
+      >
+        <SelectTrigger className="w-56">
+          <SelectValue placeholder="Ubicación" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="ALL">Todas las ubicaciones</SelectItem>
+          {locations.map((loc) => (
+            <SelectItem key={loc.id} value={loc.id}>
+              {loc.name}
             </SelectItem>
           ))}
         </SelectContent>

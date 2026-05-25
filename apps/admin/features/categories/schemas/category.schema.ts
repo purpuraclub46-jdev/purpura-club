@@ -25,6 +25,7 @@ export const categorySchema = z.object({
   group: z.enum(["JOYERIA", "PERFUMES", "ACCESORIOS"]),
   order: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
+  parentId: z.string().optional(),
 });
 
 export type CategoryFormValues = z.infer<typeof categorySchema>;

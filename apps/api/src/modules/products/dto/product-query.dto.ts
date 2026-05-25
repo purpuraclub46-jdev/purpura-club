@@ -57,6 +57,15 @@ export class ProductQueryDto {
   @IsUUID()
   categoryId?: string;
 
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Filtrar solo productos con disponibilidad activa en esta ubicación',
+  })
+  @IsOptional()
+  @IsUUID()
+  inventoryLocationId?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @Transform(({ value }) =>

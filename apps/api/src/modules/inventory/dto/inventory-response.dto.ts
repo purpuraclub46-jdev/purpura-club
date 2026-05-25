@@ -1,15 +1,24 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { InventoryMovementType } from '@prisma/client';
+import {
+  InventoryLocationType,
+  InventoryMovementType,
+} from '@prisma/client';
 
-export class InventoryRowDto {
+export class StockRowDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
   @ApiProperty({ format: 'uuid' })
-  branchId!: string;
+  inventoryLocationId!: string;
 
   @ApiProperty()
-  branchName!: string;
+  locationName!: string;
+
+  @ApiProperty({
+    enum: InventoryLocationType,
+    enumName: 'InventoryLocationType',
+  })
+  locationType!: InventoryLocationType;
 
   @ApiProperty({ format: 'uuid' })
   productId!: string;
@@ -27,15 +36,23 @@ export class InventoryRowDto {
   reservedStock!: number;
 
   @ApiProperty()
+  minimumStock!: number;
+
+  @ApiProperty({ description: 'stock - reservedStock' })
   availableStock!: number;
+
+  @ApiProperty({
+    description: 'Estado: OK, LOW (≤ mínimo) o OUT_OF_STOCK.',
+  })
+  stockLevel!: 'OK' | 'LOW' | 'OUT_OF_STOCK';
 
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 }
 
-export class PaginatedInventoryResponseDto {
-  @ApiProperty({ type: [InventoryRowDto] })
-  items!: InventoryRowDto[];
+export class PaginatedStockResponseDto {
+  @ApiProperty({ type: [StockRowDto] })
+  items!: StockRowDto[];
 
   @ApiProperty()
   meta!: {
@@ -53,10 +70,16 @@ export class InventoryMovementResponseDto {
   id!: string;
 
   @ApiProperty({ format: 'uuid' })
-  branchId!: string;
+  inventoryLocationId!: string;
 
   @ApiProperty()
-  branchName!: string;
+  locationName!: string;
+
+  @ApiProperty({
+    enum: InventoryLocationType,
+    enumName: 'InventoryLocationType',
+  })
+  locationType!: InventoryLocationType;
 
   @ApiProperty({ format: 'uuid' })
   productId!: string;
@@ -75,6 +98,12 @@ export class InventoryMovementResponseDto {
 
   @ApiPropertyOptional({ type: String, nullable: true })
   reason!: string | null;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
+  transferId!: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  transferNumber!: string | null;
 
   @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
   createdByUserId!: string | null;

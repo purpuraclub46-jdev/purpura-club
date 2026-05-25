@@ -49,12 +49,26 @@ export type PaymentMethod = "YAPE" | "FREE" | "MERCADOPAGO";
 
 export type CategoryGroup = "JOYERIA" | "PERFUMES" | "ACCESORIOS";
 
+export type InventoryLocationType = "ECOMMERCE" | "SUCURSAL" | "ALMACEN";
+
 export type InventoryMovementType =
   | "SALE"
   | "RESTOCK"
-  | "TRANSFER"
+  | "TRANSFER_OUT"
+  | "TRANSFER_IN"
   | "ADJUSTMENT"
-  | "LOSS";
+  | "LOSS"
+  | "RESERVATION";
+
+export type InventoryTransferStatus = "PENDING" | "COMPLETED" | "CANCELLED";
+
+export type StockLevel = "OK" | "LOW" | "OUT_OF_STOCK";
 
 export type OrderStatus = "PENDING" | "PAID" | "CANCELLED" | "REFUNDED";
 export type OrderPaymentMethod = "MERCADOPAGO" | "YAPE" | "CASH" | "CARD";
+
+// ─── Membership Engine ───────────────────────────
+export type MembershipBenefitType =
+  | "DISCOUNT"
+  | "RAFFLE_ENTRY"
+  | "REFERRAL_BONUS";

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   ImageOff,
+  MapPin,
   MoreHorizontal,
   Pencil,
   Sparkles,
@@ -21,6 +22,7 @@ import {
 import { DataTable, type DataTableColumn } from "@/shared/ui/data-table";
 import { extractErrorMessage } from "@/services/http/client";
 import { formatCurrency } from "@/shared/lib/format";
+import { computePricing } from "@/shared/lib/pricing";
 import { toast } from "@/stores/toast.store";
 import { useDeleteProduct } from "../hooks/use-products";
 import type { ProductEntity } from "../types";
@@ -87,37 +89,111 @@ export function ProductsTable({ data, isLoading, meta, onPageChange }: Props) {
       },
     },
     {
-      key: "categories",
-      header: "Categorías",
-      cell: (row) =>
-        row.categories.length === 0 ? (
-          <span className="text-xs text-muted-foreground">—</span>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {row.categories.slice(0, 2).map((c) => (
-              <Badge key={c.id} variant="outline">
-                {c.name}
-              </Badge>
-            ))}
-            {row.categories.length > 2 ? (
-              <Badge variant="muted">+{row.categories.length - 2}</Badge>
-            ) : null}
-          </div>
-        ),
-    },
-    {
       key: "price",
-      header: "Precio",
+      header: "Precio normal",
       headClassName: "text-right",
       className: "text-right tabular-nums",
       cell: (row) => (
-        <div className="flex flex-col text-xs">
-          <span className="text-foreground">{formatCurrency(row.price)}</span>
-          <span className="text-muted-foreground">
-            Miembro {formatCurrency(row.memberPrice)}
-          </span>
-        </div>
+        <span className="font-medium">{formatCurrency(row.price)}</span>
       ),
+    },
+    {
+      key: "discountPercentage",
+      header: "Oferta %",
+      headClassName: "text-right",
+      className: "text-right tabular-nums",
+      cell: (row) =>
+        row.discountPercentage !== null && row.discountPercentage > 0 ? (
+          <span className="font-medium text-primary">
+            -{row.discountPercentage}%
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: "salePrice",
+      header: "Precio oferta",
+      headClassName: "text-right",
+      className: "text-right tabular-nums",
+      cell: (row) =>
+        row.discountActive && row.salePrice !== null ? (
+          <span className="font-semibold text-primary">
+            {formatCurrency(row.salePrice)}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: "memberPrice",
+      header: "Precio miembro",
+      headClassName: "text-right",
+      className: "text-right tabular-nums",
+      cell: (row) => {
+        // En la tabla admin queremos siempre ver el precio miembro hipotético,
+        // independiente de quién esté logueado.
+        const memberPreview = computePricing(
+          {
+            price: row.price,
+            discountPercentage: row.discountPercentage,
+            discountActive: row.discountActive,
+            discountStartsAt: row.discountStartsAt,
+            discountEndsAt: row.discountEndsAt,
+          },
+          { isMember: true },
+        );
+        return memberPreview.memberPrice !== null ? (
+          <span className="text-xs font-medium">
+            {formatCurrency(memberPreview.memberPrice)}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+      },
+    },
+    {
+      key: "discountActive",
+      header: "Oferta activa",
+      cell: (row) =>
+        row.discountActive ? (
+          <Badge variant="default">
+            <Sparkles className="size-3" /> Vigente
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: "availability",
+      header: "Disponibilidad",
+      cell: (row) => {
+        const enabled = row.availability.filter((a) => a.active);
+        if (enabled.length === 0) {
+          return (
+            <span className="text-xs text-muted-foreground">
+              Sin ubicaciones
+            </span>
+          );
+        }
+        return (
+          <div className="flex flex-wrap gap-1">
+            {enabled.slice(0, 2).map((a) => (
+              <Badge
+                key={a.inventoryLocationId}
+                variant="outline"
+                className="max-w-35"
+              >
+                <MapPin className="size-3 shrink-0" />
+                <span className="truncate">{a.locationName}</span>
+              </Badge>
+            ))}
+            {enabled.length > 2 ? (
+              <Badge variant="muted">+{enabled.length - 2}</Badge>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "inventory",

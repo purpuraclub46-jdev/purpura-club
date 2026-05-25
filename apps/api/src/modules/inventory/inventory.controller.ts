@@ -12,7 +12,6 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiForbiddenResponse,
-  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -26,12 +25,13 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import {
   AdjustStockDto,
-  InventoryQueryDto,
-  InventoryRowDto,
   MovementsQueryDto,
-  PaginatedInventoryResponseDto,
   PaginatedMovementsResponseDto,
-  TransferStockDto,
+  PaginatedStockResponseDto,
+  ReserveStockDto,
+  StockQueryDto,
+  StockRowDto,
+  UpdateMinimumStockDto,
 } from './dto';
 import { InventoryService } from './inventory.service';
 
@@ -43,23 +43,24 @@ export class InventoryController {
   constructor(private readonly service: InventoryService) {}
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Get()
+  @Get('stock')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Listar inventario por sucursal/producto' })
-  @ApiOkResponse({ type: PaginatedInventoryResponseDto })
+  @ApiOperation({ summary: 'Listar stock por ubicación' })
+  @ApiOkResponse({ type: PaginatedStockResponseDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()
-  list(@Query() query: InventoryQueryDto) {
-    return this.service.findInventory(query);
+  listStock(@Query() query: StockQueryDto) {
+    return this.service.findStock(query);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post('adjust')
+  @Post('stock/adjust')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Ajustar stock manualmente (alta, baja o pérdida)',
+    summary:
+      'Ajustar stock manualmente (RESTOCK, ADJUSTMENT, LOSS) en una ubicación',
   })
-  @ApiOkResponse({ type: InventoryRowDto })
+  @ApiOkResponse({ type: StockRowDto })
   @ApiBadRequestResponse()
   @ApiNotFoundResponse()
   adjust(
@@ -70,17 +71,41 @@ export class InventoryController {
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post('transfer')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Transferir stock entre sucursales' })
-  @ApiNoContentResponse()
+  @Post('stock/minimum')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Actualizar stock mínimo de un producto en una ubicación' })
+  @ApiOkResponse({ type: StockRowDto })
+  setMinimum(@Body() dto: UpdateMinimumStockDto) {
+    return this.service.setMinimum(dto);
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post('stock/reserve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Reservar stock disponible (para checkout ecommerce u operaciones POS).',
+  })
+  @ApiOkResponse({ type: StockRowDto })
   @ApiBadRequestResponse()
-  @ApiNotFoundResponse()
-  async transfer(
-    @Body() dto: TransferStockDto,
+  reserve(
+    @Body() dto: ReserveStockDto,
     @CurrentUser('id') userId: string,
-  ): Promise<void> {
-    await this.service.transfer(dto, userId);
+  ) {
+    return this.service.reserve(dto, userId);
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post('stock/release')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Liberar una reserva previa de stock' })
+  @ApiOkResponse({ type: StockRowDto })
+  @ApiBadRequestResponse()
+  release(
+    @Body() dto: ReserveStockDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.release(dto, userId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)

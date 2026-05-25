@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { OrderPaymentMethod, OrderStatus } from '@prisma/client';
+import {
+  InventoryLocationType,
+  OrderPaymentMethod,
+  OrderStatus,
+} from '@prisma/client';
 
 export class OrderItemResponseDto {
   @ApiProperty({ format: 'uuid' })
@@ -35,12 +39,18 @@ export class OrderCustomerRefDto {
   fullName!: string;
 }
 
-export class OrderBranchRefDto {
+export class OrderLocationRefDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
   @ApiProperty()
   name!: string;
+
+  @ApiProperty({
+    enum: InventoryLocationType,
+    enumName: 'InventoryLocationType',
+  })
+  type!: InventoryLocationType;
 }
 
 export class OrderResponseDto {
@@ -53,8 +63,8 @@ export class OrderResponseDto {
   @ApiPropertyOptional({ type: OrderCustomerRefDto, nullable: true })
   customer!: OrderCustomerRefDto | null;
 
-  @ApiPropertyOptional({ type: OrderBranchRefDto, nullable: true })
-  branch!: OrderBranchRefDto | null;
+  @ApiPropertyOptional({ type: OrderLocationRefDto, nullable: true })
+  location!: OrderLocationRefDto | null;
 
   @ApiProperty()
   subtotal!: number;

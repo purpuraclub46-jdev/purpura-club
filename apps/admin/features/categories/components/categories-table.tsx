@@ -69,7 +69,14 @@ export function CategoriesTable({
             )}
           </div>
           <div className="flex min-w-0 flex-col">
-            <span className="truncate font-medium">{row.name}</span>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {row.parent ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {row.parent.name} ›
+                </span>
+              ) : null}
+              <span className="truncate font-medium">{row.name}</span>
+            </div>
             <span className="truncate text-xs text-muted-foreground">
               /{row.slug}
             </span>
@@ -81,6 +88,18 @@ export function CategoriesTable({
       key: "group",
       header: "Grupo",
       cell: (row) => <CategoryGroupBadge group={row.group} />,
+    },
+    {
+      key: "children",
+      header: "Hijas",
+      headClassName: "text-right",
+      className: "text-right tabular-nums",
+      cell: (row) =>
+        row.childrenCount > 0 ? (
+          row.childrenCount
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
     },
     {
       key: "products",

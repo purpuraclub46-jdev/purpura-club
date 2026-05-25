@@ -1,4 +1,8 @@
-import type { OrderPaymentMethod, OrderStatus } from "@/types/api";
+import type {
+  InventoryLocationType,
+  OrderPaymentMethod,
+  OrderStatus,
+} from "@/types/api";
 
 export interface OrderItemEntity {
   id: string;
@@ -16,16 +20,17 @@ export interface OrderCustomerRef {
   fullName: string;
 }
 
-export interface OrderBranchRef {
+export interface OrderLocationRef {
   id: string;
   name: string;
+  type: InventoryLocationType;
 }
 
 export interface OrderEntity {
   id: string;
   number: string;
   customer: OrderCustomerRef | null;
-  branch: OrderBranchRef | null;
+  location: OrderLocationRef | null;
   subtotal: number;
   discount: number;
   total: number;
@@ -42,7 +47,7 @@ export interface OrderListQuery {
   limit?: number;
   status?: OrderStatus;
   paymentMethod?: OrderPaymentMethod;
-  branchId?: string;
+  inventoryLocationId?: string;
   userId?: string;
   search?: string;
 }

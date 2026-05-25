@@ -5,17 +5,20 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { ProductAvailabilityInputDto } from './product-availability.dto';
 import { ProductImageInputDto } from './product-image.dto';
 import { ProductVariantInputDto } from './product-variant.dto';
 
@@ -68,24 +71,64 @@ export class CreateProductDto {
   @MaxLength(60)
   barcode?: string;
 
-  @ApiProperty({ example: 129.9, minimum: 0 })
+  @ApiProperty({ example: 129.9, minimum: 0, description: 'Precio normal' })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   price!: number;
 
-  @ApiProperty({ example: 99.9, minimum: 0 })
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  memberPrice!: number;
-
-  @ApiPropertyOptional({ example: 45, minimum: 0 })
+  @ApiPropertyOptional({
+    example: 45,
+    minimum: 0,
+    description: 'Costo interno',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   cost?: number;
+
+  // ─── OFERTA DINÁMICA ──────────────────────────────────────────────
+  @ApiPropertyOptional({
+    example: 20,
+    minimum: 0,
+    maximum: 100,
+    description:
+      'Porcentaje de descuento (0-100). Solo aplica si discountActive=true.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  discountPercentage?: number;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Bandera maestra para habilitar/deshabilitar la oferta.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  discountActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Inicio de la ventana de la oferta. Si se omite, no hay piso.',
+    type: String,
+    format: 'date-time',
+  })
+  @IsOptional()
+  @IsDateString()
+  discountStartsAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Fin de la ventana de la oferta. Si se omite, no hay tope.',
+    type: String,
+    format: 'date-time',
+  })
+  @IsOptional()
+  @IsDateString()
+  discountEndsAt?: string;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()
@@ -122,4 +165,16 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductVariantInputDto)
   variants?: ProductVariantInputDto[];
+
+  @ApiPropertyOptional({
+    type: [ProductAvailabilityInputDto],
+    description:
+      'Disponibilidad por ubicación. En CREATE se aplican stock inicial y mínimo. En UPDATE el stock inicial se ignora.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ProductAvailabilityInputDto)
+  availability?: ProductAvailabilityInputDto[];
 }

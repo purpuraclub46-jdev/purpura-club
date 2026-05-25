@@ -9,7 +9,7 @@ export default function PagosPage() {
     <>
       <PageHeader
         title="Pagos"
-        description="Yape requiere aprobación manual; MercadoPago es automático. Cada proveedor se gestiona desde el mismo panel."
+        description="Yape es manual y exclusivo para tickets de sorteos. MercadoPago es automático y exclusivo para pedidos del ecommerce (joyería, perfumes, accesorios)."
       />
 
       <YapeReviewPanel />

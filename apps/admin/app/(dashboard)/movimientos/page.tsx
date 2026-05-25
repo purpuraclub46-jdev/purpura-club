@@ -9,7 +9,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
-import { useBranchesList } from "@/features/branches/hooks/use-branches";
+import { useLocationsList } from "@/features/locations/hooks/use-locations";
+import { LOCATION_TYPE_LABEL } from "@/features/locations/types";
 import { MovementsTable } from "@/features/inventory/components/movements-table";
 import { useMovementsList } from "@/features/inventory/hooks/use-inventory";
 import {
@@ -21,9 +22,11 @@ import type { InventoryMovementType } from "@/types/api";
 const TYPES: InventoryMovementType[] = [
   "SALE",
   "RESTOCK",
-  "TRANSFER",
+  "TRANSFER_OUT",
+  "TRANSFER_IN",
   "ADJUSTMENT",
   "LOSS",
+  "RESERVATION",
 ];
 
 export default function MovimientosPage() {
@@ -33,8 +36,8 @@ export default function MovimientosPage() {
   });
 
   const { data, isLoading } = useMovementsList(query);
-  const { data: branchesData } = useBranchesList({ page: 1, limit: 100 });
-  const branches = branchesData?.items ?? [];
+  const { data: locationsData } = useLocationsList({ page: 1, limit: 100 });
+  const locations = locationsData?.items ?? [];
 
   const items = useMemo(() => data?.items ?? [], [data]);
 
@@ -42,28 +45,28 @@ export default function MovimientosPage() {
     <>
       <PageHeader
         title="Movimientos de inventario"
-        description="Historial completo de ventas, ajustes, transferencias y pérdidas."
+        description="Historial completo de ventas, ajustes, transferencias, reservas y pérdidas por ubicación."
       />
 
       <div className="flex flex-wrap items-center gap-2">
         <Select
-          value={query.branchId ?? "ALL"}
+          value={query.inventoryLocationId ?? "ALL"}
           onValueChange={(v) =>
             setQuery({
               ...query,
               page: 1,
-              branchId: v === "ALL" ? undefined : v,
+              inventoryLocationId: v === "ALL" ? undefined : v,
             })
           }
         >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Sucursal" />
+          <SelectTrigger className="w-64">
+            <SelectValue placeholder="Ubicación" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">Todas las sucursales</SelectItem>
-            {branches.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
+            <SelectItem value="ALL">Todas las ubicaciones</SelectItem>
+            {locations.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                {l.name} · {LOCATION_TYPE_LABEL[l.type]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -79,7 +82,7 @@ export default function MovimientosPage() {
             })
           }
         >
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-56">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>

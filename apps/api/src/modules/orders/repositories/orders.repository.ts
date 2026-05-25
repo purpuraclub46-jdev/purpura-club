@@ -4,7 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 
 const orderInclude = Prisma.validator<Prisma.OrderInclude>()({
   user: { select: { id: true, email: true, firstName: true, lastName: true } },
-  branch: { select: { id: true, name: true } },
+  location: { select: { id: true, name: true, type: true } },
   items: {
     include: {
       product: { select: { id: true, name: true, sku: true } },

@@ -4,13 +4,15 @@ import { MOVEMENT_TYPE_LABEL } from "../types";
 
 const VARIANT: Record<
   InventoryMovementType,
-  "default" | "success" | "warning" | "destructive" | "muted"
+  "default" | "success" | "warning" | "destructive" | "muted" | "outline"
 > = {
   SALE: "default",
   RESTOCK: "success",
-  TRANSFER: "muted",
+  TRANSFER_OUT: "muted",
+  TRANSFER_IN: "outline",
   ADJUSTMENT: "warning",
   LOSS: "destructive",
+  RESERVATION: "outline",
 };
 
 export function MovementTypeBadge({ type }: { type: InventoryMovementType }) {

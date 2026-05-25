@@ -1,18 +1,19 @@
 "use client";
 
 import { Settings2 } from "lucide-react";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { DataTable, type DataTableColumn } from "@/shared/ui/data-table";
-import type { InventoryRow } from "../types";
+import { LocationTypeBadge } from "@/features/locations/components/location-type-badge";
+import type { StockRow } from "../types";
 import type { PaginationMeta } from "@/types/api";
+import { StockLevelBadge } from "./stock-level-badge";
 
 interface Props {
-  data: InventoryRow[];
+  data: StockRow[];
   isLoading: boolean;
   meta?: PaginationMeta;
   onPageChange: (page: number) => void;
-  onAdjust: (row: InventoryRow) => void;
+  onAdjust: (row: StockRow) => void;
 }
 
 export function InventoryTable({
@@ -22,7 +23,7 @@ export function InventoryTable({
   onPageChange,
   onAdjust,
 }: Props) {
-  const columns: DataTableColumn<InventoryRow>[] = [
+  const columns: DataTableColumn<StockRow>[] = [
     {
       key: "product",
       header: "Producto",
@@ -36,9 +37,14 @@ export function InventoryTable({
       ),
     },
     {
-      key: "branch",
-      header: "Sucursal",
-      cell: (row) => <span className="truncate">{row.branchName}</span>,
+      key: "location",
+      header: "Ubicación",
+      cell: (row) => (
+        <div className="flex flex-col gap-1">
+          <span className="truncate">{row.locationName}</span>
+          <LocationTypeBadge type={row.locationType} />
+        </div>
+      ),
     },
     {
       key: "stock",
@@ -46,7 +52,15 @@ export function InventoryTable({
       headClassName: "text-right",
       className: "text-right tabular-nums",
       cell: (row) => (
-        <span className={row.stock <= 5 ? "text-warning" : ""}>
+        <span
+          className={
+            row.stockLevel === "OUT_OF_STOCK"
+              ? "text-destructive"
+              : row.stockLevel === "LOW"
+                ? "text-warning"
+                : ""
+          }
+        >
           {row.stock.toLocaleString("es-PE")}
         </span>
       ),
@@ -75,17 +89,16 @@ export function InventoryTable({
       ),
     },
     {
+      key: "minimum",
+      header: "Mínimo",
+      headClassName: "text-right",
+      className: "text-right tabular-nums text-xs text-muted-foreground",
+      cell: (row) => row.minimumStock.toLocaleString("es-PE"),
+    },
+    {
       key: "level",
       header: "Nivel",
-      cell: (row) => {
-        if (row.stock === 0) {
-          return <Badge variant="destructive">Sin stock</Badge>;
-        }
-        if (row.stock <= 5) {
-          return <Badge variant="warning">Stock bajo</Badge>;
-        }
-        return <Badge variant="success">Disponible</Badge>;
-      },
+      cell: (row) => <StockLevelBadge level={row.stockLevel} />,
     },
     {
       key: "actions",
@@ -108,14 +121,14 @@ export function InventoryTable({
   ];
 
   return (
-    <DataTable<InventoryRow>
+    <DataTable<StockRow>
       data={data}
       columns={columns}
       isLoading={isLoading}
       rowKey={(row) => row.id}
       onRowClick={(row) => onAdjust(row)}
       emptyTitle="Aún no hay inventario registrado"
-      emptyDescription="Crea sucursales y productos, y ajusta su stock para comenzar."
+      emptyDescription="Crea ubicaciones y productos, y ajusta su stock para comenzar."
       meta={meta}
       onPageChange={onPageChange}
     />

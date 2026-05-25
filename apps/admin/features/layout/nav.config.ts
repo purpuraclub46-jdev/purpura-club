@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowRightLeft,
   BarChart3,
   Boxes,
   CreditCard,
@@ -91,8 +92,8 @@ export const navSections: NavSection[] = [
     title: "Inventario",
     entries: [
       {
-        label: "Inventario",
-        href: "/inventario",
+        label: "Inventarios",
+        href: "/inventarios",
         icon: Boxes,
       },
       {
@@ -101,8 +102,13 @@ export const navSections: NavSection[] = [
         icon: History,
       },
       {
-        label: "Sucursales",
-        href: "/sucursales",
+        label: "Transferencias",
+        href: "/transferencias",
+        icon: ArrowRightLeft,
+      },
+      {
+        label: "Ubicaciones",
+        href: "/ubicaciones",
         icon: Store,
       },
     ],
@@ -128,8 +134,9 @@ export const navSections: NavSection[] = [
         label: "Púrpura Club",
         icon: Gift,
         items: [
-          { label: "Memberships", href: "/membresias", icon: Gift },
+          { label: "Membresías", href: "/membresias", icon: Gift },
           { label: "Referidos", href: "/referidos", icon: Users },
+          { label: "Beneficios", href: "/beneficios", icon: Sparkles },
         ],
       },
     ],

@@ -26,6 +26,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -47,10 +48,17 @@ export class ProductsController {
   @Public()
   @Get()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Listar productos activos (catálogo público)' })
+  @ApiOperation({
+    summary:
+      'Listar productos activos (catálogo público) — filtra por disponibilidad en ubicaciones ECOMMERCE',
+  })
   @ApiOkResponse({ type: PaginatedProductsResponseDto })
   listPublic(@Query() query: ProductQueryDto) {
-    return this.service.findMany({ ...query, active: true });
+    return this.service.findMany({
+      ...query,
+      active: true,
+      availableForType: query.inventoryLocationId ? undefined : 'ECOMMERCE',
+    });
   }
 
   @Public()
@@ -97,8 +105,11 @@ export class ProductsController {
   @ApiCreatedResponse({ type: ProductResponseDto })
   @ApiBadRequestResponse()
   @ApiConflictResponse({ description: 'SKU, slug o código de barras en uso' })
-  create(@Body() dto: CreateProductDto) {
-    return this.service.create(dto);
+  create(
+    @Body() dto: CreateProductDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.create(dto, userId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

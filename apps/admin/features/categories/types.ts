@@ -1,5 +1,11 @@
 import type { CategoryGroup } from "@/types/api";
 
+export interface CategoryParentRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface CategoryEntity {
   id: string;
   name: string;
@@ -8,6 +14,9 @@ export interface CategoryEntity {
   group: CategoryGroup;
   order: number;
   active: boolean;
+  parentId: string | null;
+  parent: CategoryParentRef | null;
+  childrenCount: number;
   productsCount: number;
   createdAt: string;
   updatedAt: string;
@@ -19,6 +28,8 @@ export interface CategoryListQuery {
   group?: CategoryGroup;
   active?: boolean;
   search?: string;
+  parentId?: string;
+  rootOnly?: boolean;
 }
 
 export interface CreateCategoryPayload {
@@ -28,6 +39,7 @@ export interface CreateCategoryPayload {
   group: CategoryGroup;
   order?: number;
   active?: boolean;
+  parentId?: string | null;
 }
 
 export type UpdateCategoryPayload = Partial<CreateCategoryPayload>;

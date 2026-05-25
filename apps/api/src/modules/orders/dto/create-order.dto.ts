@@ -44,10 +44,14 @@ export class CreateOrderDto {
   @IsUUID()
   userId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description:
+      'Ubicación de inventario que afecta la venta (sucursal POS o ecommerce central).',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  inventoryLocationId?: string;
 
   @ApiProperty({
     enum: OrderPaymentMethod,

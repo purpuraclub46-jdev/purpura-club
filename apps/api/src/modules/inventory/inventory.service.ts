@@ -10,16 +10,20 @@ import {
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AdjustStockDto } from './dto/adjust-stock.dto';
 import {
-  InventoryQueryDto,
+  ADJUSTMENT_MOVEMENT_TYPES,
+  AdjustStockDto,
+  ReserveStockDto,
+  UpdateMinimumStockDto,
+} from './dto/adjust-stock.dto';
+import {
   MovementsQueryDto,
+  StockQueryDto,
 } from './dto/inventory-query.dto';
 import {
   InventoryMovementResponseDto,
-  InventoryRowDto,
+  StockRowDto,
 } from './dto/inventory-response.dto';
-import { TransferStockDto } from './dto/transfer-stock.dto';
 
 @Injectable()
 export class InventoryService {
@@ -27,14 +31,15 @@ export class InventoryService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async findInventory(
-    query: InventoryQueryDto,
-  ): Promise<Paginated<InventoryRowDto>> {
-    const where: Prisma.BranchInventoryWhereInput = {};
+  // ─── Stock list ─────────────────────────────────────────────────
 
-    if (query.branchId) where.branchId = query.branchId;
+  async findStock(query: StockQueryDto): Promise<Paginated<StockRowDto>> {
+    const where: Prisma.InventoryStockWhereInput = {};
+
+    if (query.inventoryLocationId) {
+      where.inventoryLocationId = query.inventoryLocationId;
+    }
     if (query.productId) where.productId = query.productId;
-    if (query.lowStockOnly) where.stock = { lte: 5 };
 
     if (query.search) {
       where.product = {
@@ -47,66 +52,68 @@ export class InventoryService {
 
     const skip = (query.page - 1) * query.limit;
 
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.branchInventory.findMany({
+    let [items, total] = await this.prisma.$transaction([
+      this.prisma.inventoryStock.findMany({
         where,
         skip,
         take: query.limit,
-        orderBy: [{ branch: { name: 'asc' } }, { product: { name: 'asc' } }],
+        orderBy: [
+          { location: { name: 'asc' } },
+          { product: { name: 'asc' } },
+        ],
         include: {
-          branch: { select: { id: true, name: true } },
+          location: { select: { id: true, name: true, type: true } },
           product: { select: { id: true, name: true, sku: true } },
         },
       }),
-      this.prisma.branchInventory.count({ where }),
+      this.prisma.inventoryStock.count({ where }),
     ]);
 
+    if (query.lowStockOnly) {
+      // Filtramos a nivel app porque Prisma no soporta comparar dos
+      // columnas en where directamente en versiones 5.x.
+      items = items.filter((row) => row.stock <= row.minimumStock);
+      total = items.length;
+    }
+
     return {
-      items: items.map(
-        (row): InventoryRowDto => ({
-          id: row.id,
-          branchId: row.branchId,
-          branchName: row.branch.name,
-          productId: row.productId,
-          productName: row.product.name,
-          productSku: row.product.sku,
-          stock: row.stock,
-          reservedStock: row.reservedStock,
-          availableStock: Math.max(0, row.stock - row.reservedStock),
-          updatedAt: row.updatedAt,
-        }),
-      ),
+      items: items.map((row) => this.toStockRow(row)),
       meta: buildPaginationMeta(total, query.page, query.limit),
     };
   }
 
+  // ─── Adjust ─────────────────────────────────────────────────────
+
   async adjust(
     dto: AdjustStockDto,
     actorUserId?: string,
-  ): Promise<InventoryRowDto> {
+  ): Promise<StockRowDto> {
     if (dto.quantity === 0) {
       throw new BadRequestException('La cantidad no puede ser 0');
     }
+    if (
+      !ADJUSTMENT_MOVEMENT_TYPES.includes(
+        dto.type as (typeof ADJUSTMENT_MOVEMENT_TYPES)[number],
+      )
+    ) {
+      throw new BadRequestException(
+        'Tipo de movimiento no permitido para ajuste manual',
+      );
+    }
 
-    const [branch, product] = await Promise.all([
-      this.prisma.branch.findUnique({ where: { id: dto.branchId } }),
-      this.prisma.product.findUnique({ where: { id: dto.productId } }),
-    ]);
-
-    if (!branch) throw new NotFoundException('Sucursal no encontrada');
-    if (!product) throw new NotFoundException('Producto no encontrado');
+    await this.assertLocationAndProduct(dto.inventoryLocationId, dto.productId);
 
     const row = await this.prisma.$transaction(async (tx) => {
-      const current = await tx.branchInventory.upsert({
+      const current = await tx.inventoryStock.upsert({
         where: {
-          branchId_productId: {
-            branchId: dto.branchId,
+          inventoryLocationId_productId: {
+            inventoryLocationId: dto.inventoryLocationId,
             productId: dto.productId,
           },
         },
         update: {},
         create: {
-          branchId: dto.branchId,
+          inventoryLocationId: dto.inventoryLocationId,
           productId: dto.productId,
           stock: 0,
         },
@@ -119,18 +126,18 @@ export class InventoryService {
         );
       }
 
-      const updated = await tx.branchInventory.update({
+      const updated = await tx.inventoryStock.update({
         where: { id: current.id },
         data: { stock: nextStock },
         include: {
-          branch: { select: { id: true, name: true } },
+          location: { select: { id: true, name: true, type: true } },
           product: { select: { id: true, name: true, sku: true } },
         },
       });
 
       await tx.inventoryMovement.create({
         data: {
-          branchId: dto.branchId,
+          inventoryLocationId: dto.inventoryLocationId,
           productId: dto.productId,
           quantity: dto.quantity,
           type: dto.type,
@@ -143,114 +150,144 @@ export class InventoryService {
     });
 
     this.logger.log(
-      `Stock adjusted ${dto.productId} @ ${dto.branchId} by ${dto.quantity} (${dto.type})`,
+      `Stock adjusted ${dto.productId} @ ${dto.inventoryLocationId} by ${dto.quantity} (${dto.type})`,
     );
-
-    return {
-      id: row.id,
-      branchId: row.branchId,
-      branchName: row.branch.name,
-      productId: row.productId,
-      productName: row.product.name,
-      productSku: row.product.sku,
-      stock: row.stock,
-      reservedStock: row.reservedStock,
-      availableStock: Math.max(0, row.stock - row.reservedStock),
-      updatedAt: row.updatedAt,
-    };
+    return this.toStockRow(row);
   }
 
-  async transfer(
-    dto: TransferStockDto,
-    actorUserId?: string,
-  ): Promise<void> {
-    if (dto.fromBranchId === dto.toBranchId) {
-      throw new BadRequestException(
-        'La sucursal origen y destino deben ser distintas',
-      );
+  // ─── Minimum stock ──────────────────────────────────────────────
+
+  async setMinimum(
+    dto: UpdateMinimumStockDto,
+  ): Promise<StockRowDto> {
+    if (dto.minimumStock < 0) {
+      throw new BadRequestException('El stock mínimo no puede ser negativo');
     }
 
-    const [from, to, product] = await Promise.all([
-      this.prisma.branch.findUnique({ where: { id: dto.fromBranchId } }),
-      this.prisma.branch.findUnique({ where: { id: dto.toBranchId } }),
-      this.prisma.product.findUnique({ where: { id: dto.productId } }),
-    ]);
+    await this.assertLocationAndProduct(dto.inventoryLocationId, dto.productId);
 
-    if (!from) throw new NotFoundException('Sucursal origen no encontrada');
-    if (!to) throw new NotFoundException('Sucursal destino no encontrada');
-    if (!product) throw new NotFoundException('Producto no encontrado');
+    const row = await this.prisma.inventoryStock.upsert({
+      where: {
+        inventoryLocationId_productId: {
+          inventoryLocationId: dto.inventoryLocationId,
+          productId: dto.productId,
+        },
+      },
+      create: {
+        inventoryLocationId: dto.inventoryLocationId,
+        productId: dto.productId,
+        stock: 0,
+        minimumStock: dto.minimumStock,
+      },
+      update: { minimumStock: dto.minimumStock },
+      include: {
+        location: { select: { id: true, name: true, type: true } },
+        product: { select: { id: true, name: true, sku: true } },
+      },
+    });
 
-    await this.prisma.$transaction(async (tx) => {
-      const source = await tx.branchInventory.findUnique({
+    return this.toStockRow(row);
+  }
+
+  // ─── Reservations ───────────────────────────────────────────────
+
+  async reserve(
+    dto: ReserveStockDto,
+    actorUserId?: string,
+  ): Promise<StockRowDto> {
+    if (dto.quantity <= 0) {
+      throw new BadRequestException(
+        'La cantidad a reservar debe ser mayor a 0',
+      );
+    }
+    return this.applyReservation(dto, dto.quantity, actorUserId);
+  }
+
+  async release(
+    dto: ReserveStockDto,
+    actorUserId?: string,
+  ): Promise<StockRowDto> {
+    if (dto.quantity <= 0) {
+      throw new BadRequestException(
+        'La cantidad a liberar debe ser mayor a 0',
+      );
+    }
+    return this.applyReservation(dto, -dto.quantity, actorUserId);
+  }
+
+  private async applyReservation(
+    dto: ReserveStockDto,
+    signedQuantity: number,
+    actorUserId?: string,
+  ): Promise<StockRowDto> {
+    await this.assertLocationAndProduct(dto.inventoryLocationId, dto.productId);
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.inventoryStock.upsert({
         where: {
-          branchId_productId: {
-            branchId: dto.fromBranchId,
+          inventoryLocationId_productId: {
+            inventoryLocationId: dto.inventoryLocationId,
             productId: dto.productId,
           },
         },
+        update: {},
+        create: {
+          inventoryLocationId: dto.inventoryLocationId,
+          productId: dto.productId,
+          stock: 0,
+        },
       });
 
-      if (!source || source.stock < dto.quantity) {
+      const nextReserved = current.reservedStock + signedQuantity;
+      if (nextReserved < 0) {
         throw new BadRequestException(
-          'Stock insuficiente en la sucursal origen',
+          `No hay suficiente reserva para liberar (actual ${current.reservedStock})`,
         );
       }
 
-      await tx.branchInventory.update({
-        where: { id: source.id },
-        data: { stock: source.stock - dto.quantity },
+      const available = current.stock - current.reservedStock;
+      if (signedQuantity > 0 && available < signedQuantity) {
+        throw new BadRequestException(
+          `Stock disponible insuficiente (${available}) para reservar ${signedQuantity}`,
+        );
+      }
+
+      const updated = await tx.inventoryStock.update({
+        where: { id: current.id },
+        data: { reservedStock: nextReserved },
+        include: {
+          location: { select: { id: true, name: true, type: true } },
+          product: { select: { id: true, name: true, sku: true } },
+        },
       });
 
-      const target = await tx.branchInventory.upsert({
-        where: {
-          branchId_productId: {
-            branchId: dto.toBranchId,
-            productId: dto.productId,
-          },
-        },
-        update: { stock: { increment: dto.quantity } },
-        create: {
-          branchId: dto.toBranchId,
+      await tx.inventoryMovement.create({
+        data: {
+          inventoryLocationId: dto.inventoryLocationId,
           productId: dto.productId,
-          stock: dto.quantity,
+          quantity: signedQuantity,
+          type: InventoryMovementType.RESERVATION,
+          reason: dto.reason ?? (signedQuantity > 0 ? 'Reserva' : 'Liberación'),
+          createdByUserId: actorUserId,
         },
       });
 
-      await tx.inventoryMovement.createMany({
-        data: [
-          {
-            branchId: dto.fromBranchId,
-            productId: dto.productId,
-            quantity: -dto.quantity,
-            type: InventoryMovementType.TRANSFER,
-            reason: dto.reason ?? `Transferencia a ${to.name}`,
-            createdByUserId: actorUserId,
-          },
-          {
-            branchId: dto.toBranchId,
-            productId: dto.productId,
-            quantity: dto.quantity,
-            type: InventoryMovementType.TRANSFER,
-            reason: dto.reason ?? `Transferencia desde ${from.name}`,
-            createdByUserId: actorUserId,
-          },
-        ],
-      });
-
-      return target;
+      return updated;
     });
 
-    this.logger.log(
-      `Transferred ${dto.quantity} of ${dto.productId} from ${dto.fromBranchId} to ${dto.toBranchId}`,
-    );
+    return this.toStockRow(row);
   }
+
+  // ─── Movements ──────────────────────────────────────────────────
 
   async findMovements(
     query: MovementsQueryDto,
   ): Promise<Paginated<InventoryMovementResponseDto>> {
     const where: Prisma.InventoryMovementWhereInput = {};
 
-    if (query.branchId) where.branchId = query.branchId;
+    if (query.inventoryLocationId) {
+      where.inventoryLocationId = query.inventoryLocationId;
+    }
     if (query.productId) where.productId = query.productId;
     if (query.type) where.type = query.type;
 
@@ -263,9 +300,12 @@ export class InventoryService {
         take: query.limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          branch: { select: { id: true, name: true } },
+          location: { select: { id: true, name: true, type: true } },
           product: { select: { id: true, name: true, sku: true } },
-          createdByUser: { select: { id: true, firstName: true, lastName: true } },
+          createdByUser: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+          transfer: { select: { id: true, number: true } },
         },
       }),
       this.prisma.inventoryMovement.count({ where }),
@@ -275,14 +315,17 @@ export class InventoryService {
       items: items.map(
         (m): InventoryMovementResponseDto => ({
           id: m.id,
-          branchId: m.branchId,
-          branchName: m.branch.name,
+          inventoryLocationId: m.inventoryLocationId,
+          locationName: m.location.name,
+          locationType: m.location.type,
           productId: m.productId,
           productName: m.product.name,
           productSku: m.product.sku,
           quantity: m.quantity,
           type: m.type,
           reason: m.reason,
+          transferId: m.transferId,
+          transferNumber: m.transfer?.number ?? null,
           createdByUserId: m.createdByUserId,
           createdByUserName: m.createdByUser
             ? `${m.createdByUser.firstName} ${m.createdByUser.lastName}`.trim()
@@ -291,6 +334,59 @@ export class InventoryService {
         }),
       ),
       meta: buildPaginationMeta(total, query.page, query.limit),
+    };
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────
+
+  private async assertLocationAndProduct(
+    locationId: string,
+    productId: string,
+  ): Promise<void> {
+    const [loc, prod] = await Promise.all([
+      this.prisma.inventoryLocation.findUnique({
+        where: { id: locationId },
+        select: { id: true },
+      }),
+      this.prisma.product.findUnique({
+        where: { id: productId },
+        select: { id: true },
+      }),
+    ]);
+    if (!loc) throw new NotFoundException('Ubicación no encontrada');
+    if (!prod) throw new NotFoundException('Producto no encontrado');
+  }
+
+  private toStockRow(row: {
+    id: string;
+    inventoryLocationId: string;
+    productId: string;
+    stock: number;
+    reservedStock: number;
+    minimumStock: number;
+    updatedAt: Date;
+    location: { id: string; name: string; type: any };
+    product: { id: string; name: string; sku: string };
+  }): StockRowDto {
+    const available = Math.max(0, row.stock - row.reservedStock);
+    let stockLevel: 'OK' | 'LOW' | 'OUT_OF_STOCK' = 'OK';
+    if (row.stock === 0) stockLevel = 'OUT_OF_STOCK';
+    else if (row.stock <= row.minimumStock) stockLevel = 'LOW';
+
+    return {
+      id: row.id,
+      inventoryLocationId: row.inventoryLocationId,
+      locationName: row.location.name,
+      locationType: row.location.type,
+      productId: row.productId,
+      productName: row.product.name,
+      productSku: row.product.sku,
+      stock: row.stock,
+      reservedStock: row.reservedStock,
+      minimumStock: row.minimumStock,
+      availableStock: available,
+      stockLevel,
+      updatedAt: row.updatedAt,
     };
   }
 }

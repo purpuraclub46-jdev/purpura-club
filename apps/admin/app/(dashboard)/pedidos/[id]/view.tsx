@@ -29,6 +29,7 @@ import { formatCurrency, formatDate } from "@/shared/lib/format";
 import { extractErrorMessage } from "@/services/http/client";
 import { toast } from "@/stores/toast.store";
 import type { OrderStatus } from "@/types/api";
+import { LocationTypeBadge } from "@/features/locations/components/location-type-badge";
 import {
   OrderPaymentBadge,
   OrderStatusBadge,
@@ -208,11 +209,18 @@ export function OrderDetailView({ id }: { id: string }) {
                   </p>
                 ) : null}
               </div>
-              <div className="border-t border-border pt-2">
-                <p className="text-xs text-muted-foreground">Sucursal</p>
-                <p className="font-medium">
-                  {order.branch ? order.branch.name : "Online"}
+              <div className="space-y-1 border-t border-border pt-2">
+                <p className="text-xs text-muted-foreground">
+                  Ubicación de inventario
                 </p>
+                {order.location ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium">{order.location.name}</p>
+                    <LocationTypeBadge type={order.location.type} />
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">Sin ubicación asignada</p>
+                )}
               </div>
               {order.notes ? (
                 <div className="border-t border-border pt-2">

@@ -1,4 +1,5 @@
 export * from './create-product.dto';
+export * from './product-availability.dto';
 export * from './product-image.dto';
 export * from './product-query.dto';
 export * from './product-response.dto';

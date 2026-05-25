@@ -12,7 +12,7 @@ import {
   Min,
 } from 'class-validator';
 
-export class InventoryQueryDto {
+export class StockQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -31,7 +31,7 @@ export class InventoryQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  inventoryLocationId?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
@@ -45,7 +45,10 @@ export class InventoryQueryDto {
   @MaxLength(100)
   search?: string;
 
-  @ApiPropertyOptional({ description: 'Sólo mostrar registros con stock bajo o cero' })
+  @ApiPropertyOptional({
+    description:
+      'Sólo registros donde stock <= minimumStock (o donde el stock está bajo).',
+  })
   @IsOptional()
   @Transform(({ value }) =>
     typeof value === 'string' ? value === 'true' : Boolean(value),
@@ -72,7 +75,7 @@ export class MovementsQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
-  branchId?: string;
+  inventoryLocationId?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

@@ -27,6 +27,10 @@ model User {
   role         Role     @default(USER)
   refreshToken String?
 
+  // Referido: quién invitó a este usuario. Si se llena al registro,
+  // el primer pedido elegible recompensa al referrer.
+  referredByUserId String? @db.Uuid
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -34,8 +38,15 @@ model User {
   wonRaffle          Raffle[]            @relation("RaffleWinner")
   orders             Order[]
   inventoryMovements InventoryMovement[]
+  inventoryTransfers InventoryTransfer[]
+
+  membership      Membership?
+  benefitLogs     MembershipBenefitLog[]
+  referralsMade   Referral[]              @relation("ReferralFrom")
+  referralReceived Referral?              @relation("ReferralTo")
 
   @@index([email])
+  @@index([referredByUserId])
   @@map("users")
 }
 
@@ -148,13 +159,17 @@ model Category {
   group    CategoryGroup @default(JOYERIA)
   order    Int           @default(0)
   active   Boolean       @default(true)
+  parentId String?       @db.Uuid
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryHierarchy")
   products ProductCategory[]
 
   @@index([group, active])
+  @@index([parentId])
   @@map("categories")
 }
 
@@ -166,9 +181,17 @@ model Product {
   sku         String  @unique
   barcode     String? @unique
 
-  price       Decimal @db.Decimal(10, 2)
-  memberPrice Decimal @db.Decimal(10, 2)
-  cost        Decimal @db.Decimal(10, 2) @default(0)
+  // Precio normal (precio público base).
+  price Decimal @db.Decimal(10, 2)
+  // Costo interno (no público).
+  cost  Decimal @db.Decimal(10, 2) @default(0)
+
+  // Configuración de oferta dinámica. El precio de oferta y el precio miembro
+  // se computan al vuelo a partir de estos campos.
+  discountPercentage Decimal?  @db.Decimal(5, 2)
+  discountActive     Boolean   @default(false)
+  discountStartsAt   DateTime?
+  discountEndsAt     DateTime?
 
   featured Boolean @default(false)
   active   Boolean @default(true)
@@ -176,16 +199,36 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  images     ProductImage[]
-  categories ProductCategory[]
-  variants   ProductVariant[]
-  inventory  BranchInventory[]
-  movements  InventoryMovement[]
-  orderItems OrderItem[]
+  images        ProductImage[]
+  categories    ProductCategory[]
+  variants      ProductVariant[]
+  availability  ProductAvailability[]
+  stock         InventoryStock[]
+  movements     InventoryMovement[]
+  transferItems InventoryTransferItem[]
+  orderItems    OrderItem[]
 
   @@index([active, featured])
   @@index([sku])
   @@map("products")
+}
+
+model ProductAvailability {
+  id                  String  @id @default(uuid()) @db.Uuid
+  productId           String  @db.Uuid
+  inventoryLocationId String  @db.Uuid
+  active              Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [inventoryLocationId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, inventoryLocationId])
+  @@index([inventoryLocationId, active])
+  @@index([productId, active])
+  @@map("product_availability")
 }
 
 model ProductImage {
@@ -231,73 +274,136 @@ model ProductVariant {
 }
 
 // ─────────────────────────────────────────────
-// INVENTORY — MULTI-BRANCH
+// INVENTORY — ENTERPRISE MULTI-LOCATION
 // ─────────────────────────────────────────────
 
-model Branch {
-  id      String  @id @default(uuid()) @db.Uuid
-  name    String
-  slug    String  @unique
-  address String?
-  phone   String?
-  active  Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  inventory BranchInventory[]
-  movements InventoryMovement[]
-  orders    Order[]
-
-  @@index([active])
-  @@map("branches")
+enum InventoryLocationType {
+  ECOMMERCE
+  SUCURSAL
+  ALMACEN
 }
 
-model BranchInventory {
-  id            String @id @default(uuid()) @db.Uuid
-  branchId      String @db.Uuid
-  productId     String @db.Uuid
-  stock         Int    @default(0)
-  reservedStock Int    @default(0)
+model InventoryLocation {
+  id      String                @id @default(uuid()) @db.Uuid
+  name    String
+  slug    String                @unique
+  type    InventoryLocationType
+  address String?
+  phone   String?
+  active  Boolean               @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stock         InventoryStock[]
+  movements     InventoryMovement[]
+  orders        Order[]
+  availability  ProductAvailability[]
+  transfersFrom InventoryTransfer[] @relation("TransferFromLocation")
+  transfersTo   InventoryTransfer[] @relation("TransferToLocation")
 
-  @@unique([branchId, productId])
+  @@index([active, type])
+  @@map("inventory_locations")
+}
+
+model InventoryStock {
+  id                  String @id @default(uuid()) @db.Uuid
+  inventoryLocationId String @db.Uuid
+  productId           String @db.Uuid
+  stock               Int    @default(0)
+  reservedStock       Int    @default(0)
+  minimumStock        Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  location InventoryLocation @relation(fields: [inventoryLocationId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryLocationId, productId])
   @@index([productId])
-  @@map("branch_inventory")
+  @@map("inventory_stock")
 }
 
 enum InventoryMovementType {
   SALE
   RESTOCK
-  TRANSFER
+  TRANSFER_OUT
+  TRANSFER_IN
   ADJUSTMENT
   LOSS
+  RESERVATION
 }
 
 model InventoryMovement {
-  id              String                @id @default(uuid()) @db.Uuid
-  branchId        String                @db.Uuid
-  productId       String                @db.Uuid
-  quantity        Int
-  type            InventoryMovementType
-  reason          String?
-  createdByUserId String?               @db.Uuid
+  id                  String                @id @default(uuid()) @db.Uuid
+  inventoryLocationId String                @db.Uuid
+  productId           String                @db.Uuid
+  quantity            Int
+  type                InventoryMovementType
+  reason              String?
+  createdByUserId     String?               @db.Uuid
+  transferId          String?               @db.Uuid
 
   createdAt DateTime @default(now())
 
-  branch        Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  createdByUser User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  location      InventoryLocation  @relation(fields: [inventoryLocationId], references: [id], onDelete: Cascade)
+  product       Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdByUser User?              @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  transfer      InventoryTransfer? @relation(fields: [transferId], references: [id], onDelete: SetNull)
 
-  @@index([branchId, createdAt])
+  @@index([inventoryLocationId, createdAt])
   @@index([productId, createdAt])
   @@index([type, createdAt])
+  @@index([transferId])
   @@map("inventory_movements")
+}
+
+enum InventoryTransferStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model InventoryTransfer {
+  id              String                  @id @default(uuid()) @db.Uuid
+  number          String                  @unique
+  fromLocationId  String                  @db.Uuid
+  toLocationId    String                  @db.Uuid
+  status          InventoryTransferStatus @default(PENDING)
+  notes           String?
+  createdByUserId String?                 @db.Uuid
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  fromLocation  InventoryLocation       @relation("TransferFromLocation", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocation    InventoryLocation       @relation("TransferToLocation", fields: [toLocationId], references: [id], onDelete: Restrict)
+  createdByUser User?                   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  items         InventoryTransferItem[]
+  movements     InventoryMovement[]
+
+  @@index([status, createdAt])
+  @@index([fromLocationId])
+  @@index([toLocationId])
+  @@map("inventory_transfers")
+}
+
+model InventoryTransferItem {
+  id         String @id @default(uuid()) @db.Uuid
+  transferId String @db.Uuid
+  productId  String @db.Uuid
+  quantity   Int
+
+  createdAt DateTime @default(now())
+
+  transfer InventoryTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([transferId, productId])
+  @@index([productId])
+  @@map("inventory_transfer_items")
 }
 
 // ─────────────────────────────────────────────
@@ -319,27 +425,28 @@ enum OrderPaymentMethod {
 }
 
 model Order {
-  id            String             @id @default(uuid()) @db.Uuid
-  number        String             @unique
-  userId        String?            @db.Uuid
-  branchId      String?            @db.Uuid
-  subtotal      Decimal            @db.Decimal(10, 2)
-  discount      Decimal            @db.Decimal(10, 2) @default(0)
-  total         Decimal            @db.Decimal(10, 2)
-  paymentMethod OrderPaymentMethod
-  status        OrderStatus        @default(PENDING)
-  notes         String?
+  id                  String             @id @default(uuid()) @db.Uuid
+  number              String             @unique
+  userId              String?            @db.Uuid
+  inventoryLocationId String?            @db.Uuid
+  subtotal            Decimal            @db.Decimal(10, 2)
+  discount            Decimal            @db.Decimal(10, 2) @default(0)
+  total               Decimal            @db.Decimal(10, 2)
+  paymentMethod       OrderPaymentMethod
+  status              OrderStatus        @default(PENDING)
+  notes               String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
-  branch        Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  location      InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: SetNull)
   items         OrderItem[]
   raffleEntries RaffleEntry[]
+  benefitLogs   MembershipBenefitLog[]
 
   @@index([userId, status])
-  @@index([branchId, status])
+  @@index([inventoryLocationId, status])
   @@index([status, createdAt])
   @@map("orders")
 }
@@ -360,4 +467,68 @@ model OrderItem {
   @@index([orderId])
   @@index([productId])
   @@map("order_items")
+}
+
+// ─────────────────────────────────────────────
+// PÚRPURA CLUB — MEMBERSHIP ENGINE
+// ─────────────────────────────────────────────
+
+model Membership {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @unique @db.Uuid
+  active         Boolean   @default(true)
+  startedAt      DateTime  @default(now())
+  expiresAt      DateTime
+  lastPurchaseAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([active, expiresAt])
+  @@index([expiresAt])
+  @@map("memberships")
+}
+
+enum MembershipBenefitType {
+  DISCOUNT
+  RAFFLE_ENTRY
+  REFERRAL_BONUS
+}
+
+model MembershipBenefitLog {
+  id          String                @id @default(uuid()) @db.Uuid
+  userId      String                @db.Uuid
+  orderId     String?               @db.Uuid
+  type        MembershipBenefitType
+  description String
+  amount      Decimal?              @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([orderId])
+  @@map("membership_benefit_logs")
+}
+
+model Referral {
+  id              String  @id @default(uuid()) @db.Uuid
+  referrerUserId  String  @db.Uuid
+  referredUserId  String  @unique @db.Uuid
+  rewarded        Boolean @default(false)
+  rewardedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  referrer User @relation("ReferralFrom", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referred User @relation("ReferralTo", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerUserId, rewarded])
+  @@map("referrals")
 }

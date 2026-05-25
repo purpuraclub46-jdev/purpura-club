@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Calendar, Sparkles } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Input } from "@/shared/ui/input";
@@ -15,7 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
+import { Switch } from "@/shared/ui/switch";
 import { extractErrorMessage } from "@/services/http/client";
+import { formatCurrency } from "@/shared/lib/format";
+import { computePricing } from "@/shared/lib/pricing";
 import { toast } from "@/stores/toast.store";
 import {
   productSchema,
@@ -27,9 +31,11 @@ import {
 } from "../hooks/use-products";
 import type {
   CreateProductPayload,
+  ProductAvailabilityPayload,
   ProductEntity,
   UpdateProductPayload,
 } from "../types";
+import { ProductAvailabilityEditor } from "./product-availability-editor";
 import { ProductImageEditor } from "./product-image-editor";
 import { ProductVariantEditor } from "./product-variant-editor";
 import { ProductCategoryPicker } from "./product-category-picker";
@@ -39,6 +45,16 @@ interface ProductFormProps {
   mode: "create" | "edit";
 }
 
+const toAvailability = (
+  values: ProductFormValues,
+): ProductAvailabilityPayload[] =>
+  (values.availability ?? []).map((a) => ({
+    inventoryLocationId: a.inventoryLocationId,
+    active: a.active,
+    initialStock: a.initialStock,
+    minimumStock: a.minimumStock,
+  }));
+
 const toPayload = (values: ProductFormValues): CreateProductPayload => ({
   name: values.name,
   slug: values.slug?.trim() || undefined,
@@ -46,8 +62,18 @@ const toPayload = (values: ProductFormValues): CreateProductPayload => ({
   sku: values.sku.trim(),
   barcode: values.barcode?.trim() || undefined,
   price: values.price,
-  memberPrice: values.memberPrice,
   cost: values.cost ?? 0,
+  discountPercentage:
+    values.discountPercentage === null || values.discountPercentage === undefined
+      ? undefined
+      : values.discountPercentage,
+  discountActive: values.discountActive ?? false,
+  discountStartsAt: values.discountStartsAt
+    ? new Date(values.discountStartsAt).toISOString()
+    : undefined,
+  discountEndsAt: values.discountEndsAt
+    ? new Date(values.discountEndsAt).toISOString()
+    : undefined,
   featured: values.featured ?? false,
   active: values.active ?? true,
   categoryIds: values.categoryIds ?? [],
@@ -61,7 +87,18 @@ const toPayload = (values: ProductFormValues): CreateProductPayload => ({
       name: v.name.trim(),
       value: v.value.trim(),
     })) ?? [],
+  availability: toAvailability(values),
 });
+
+const toLocalInputValue = (iso: string | null | undefined): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+};
 
 export function ProductForm({ initial, mode }: ProductFormProps) {
   const router = useRouter();
@@ -84,8 +121,11 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
       sku: initial?.sku ?? "",
       barcode: initial?.barcode ?? "",
       price: initial?.price ?? 0,
-      memberPrice: initial?.memberPrice ?? 0,
       cost: initial?.cost ?? 0,
+      discountPercentage: initial?.discountPercentage ?? null,
+      discountActive: initial?.discountActive ?? false,
+      discountStartsAt: toLocalInputValue(initial?.discountStartsAt),
+      discountEndsAt: toLocalInputValue(initial?.discountEndsAt),
       featured: initial?.featured ?? false,
       active: initial?.active ?? true,
       categoryIds: initial?.categories.map((c) => c.id) ?? [],
@@ -94,11 +134,38 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
         [],
       variants:
         initial?.variants.map((v) => ({ name: v.name, value: v.value })) ?? [],
+      availability:
+        initial?.availability.map((a) => ({
+          inventoryLocationId: a.inventoryLocationId,
+          active: a.active,
+          initialStock: a.stock,
+          minimumStock: a.minimumStock,
+        })) ?? [],
     },
   });
 
   const featured = watch("featured");
   const active = watch("active");
+  const discountActive = watch("discountActive") ?? false;
+  const discountPercentage = watch("discountPercentage");
+  const price = watch("price");
+  const discountStartsAt = watch("discountStartsAt");
+  const discountEndsAt = watch("discountEndsAt");
+
+  // Vista previa de precios computada en vivo.
+  const preview = computePricing(
+    {
+      price: Number(price) || 0,
+      discountPercentage:
+        discountPercentage === null || discountPercentage === undefined
+          ? null
+          : Number(discountPercentage),
+      discountActive: discountActive,
+      discountStartsAt: discountStartsAt || null,
+      discountEndsAt: discountEndsAt || null,
+    },
+    { isMember: true },
+  );
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -200,12 +267,13 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
             <CardHeader>
               <CardTitle>Precios</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 md:grid-cols-3">
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   label="Precio normal (PEN)"
                   htmlFor="price"
                   required
+                  description="Precio base público del producto."
                   error={errors.price?.message}
                 >
                   <Input
@@ -217,24 +285,9 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
                   />
                 </FormField>
                 <FormField
-                  label="Precio miembro (PEN)"
-                  htmlFor="memberPrice"
-                  required
-                  description="Precio con descuento para miembros Púrpura Club."
-                  error={errors.memberPrice?.message}
-                >
-                  <Input
-                    id="memberPrice"
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    {...register("memberPrice", { valueAsNumber: true })}
-                  />
-                </FormField>
-                <FormField
                   label="Costo (PEN)"
                   htmlFor="cost"
-                  description="Costo de adquisición (no se muestra al cliente)."
+                  description="Costo interno, no visible."
                   error={errors.cost?.message}
                 >
                   <Input
@@ -246,6 +299,153 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
                   />
                 </FormField>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-primary" />
+                  <CardTitle>Oferta</CardTitle>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Activar oferta</span>
+                  <Controller
+                    control={control}
+                    name="discountActive"
+                    render={({ field }) => (
+                      <Switch
+                        checked={field.value ?? false}
+                        onCheckedChange={field.onChange}
+                        aria-label="Activar oferta"
+                      />
+                    )}
+                  />
+                </label>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                El precio de oferta se calcula automáticamente desde el precio
+                normal y el porcentaje. Los miembros Púrpura Club reciben{" "}
+                <span className="font-medium text-primary">10 % adicional</span>{" "}
+                solo cuando la oferta está vigente.
+              </p>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <FormField
+                  label="Porcentaje de descuento (%)"
+                  htmlFor="discountPercentage"
+                  error={errors.discountPercentage?.message}
+                >
+                  <Input
+                    id="discountPercentage"
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    max={100}
+                    disabled={!discountActive}
+                    placeholder="0"
+                    {...register("discountPercentage", {
+                      setValueAs: (v) =>
+                        v === "" || v === null || v === undefined
+                          ? null
+                          : Number(v),
+                    })}
+                  />
+                </FormField>
+                <FormField
+                  label="Inicio de la oferta"
+                  htmlFor="discountStartsAt"
+                  description="Opcional. Si se omite, comienza de inmediato."
+                  error={errors.discountStartsAt?.message}
+                >
+                  <div className="relative">
+                    <Calendar className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="discountStartsAt"
+                      type="datetime-local"
+                      disabled={!discountActive}
+                      {...register("discountStartsAt")}
+                    />
+                  </div>
+                </FormField>
+                <FormField
+                  label="Fin de la oferta"
+                  htmlFor="discountEndsAt"
+                  description="Opcional. Si se omite, no caduca."
+                  error={errors.discountEndsAt?.message}
+                >
+                  <div className="relative">
+                    <Calendar className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="discountEndsAt"
+                      type="datetime-local"
+                      disabled={!discountActive}
+                      {...register("discountEndsAt")}
+                    />
+                  </div>
+                </FormField>
+              </div>
+
+              <div className="rounded-lg border border-border bg-surface/40 p-4">
+                <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Previsualización de precios
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Precio normal
+                    </p>
+                    <p className="text-base font-medium tabular-nums">
+                      {formatCurrency(preview.price)}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Precio oferta
+                    </p>
+                    <p className="text-base font-semibold tabular-nums text-primary">
+                      {preview.salePrice !== null
+                        ? formatCurrency(preview.salePrice)
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Precio miembro (con 10% extra)
+                    </p>
+                    <p className="text-base font-semibold tabular-nums">
+                      {preview.memberPrice !== null
+                        ? formatCurrency(preview.memberPrice)
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+                {!preview.discountActive ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Sin oferta vigente: cliente y miembro pagan{" "}
+                    {formatCurrency(preview.price)}.
+                  </p>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <Controller
+                control={control}
+                name="availability"
+                render={({ field }) => (
+                  <ProductAvailabilityEditor
+                    value={field.value ?? []}
+                    onChange={field.onChange}
+                    hideInitialStock={mode === "edit"}
+                  />
+                )}
+              />
             </CardContent>
           </Card>
 
