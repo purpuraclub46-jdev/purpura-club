@@ -78,24 +78,6 @@ export class RaffleEntriesRepository {
     });
   }
 
-  async findRandomPaid(raffleId: string): Promise<RaffleEntry | null> {
-    const total = await this.prisma.raffleEntry.count({
-      where: { raffleId, status: 'PAID' },
-    });
-
-    if (total === 0) return null;
-
-    const skip = Math.floor(Math.random() * total);
-    const [entry] = await this.prisma.raffleEntry.findMany({
-      where: { raffleId, status: 'PAID' },
-      skip,
-      take: 1,
-      orderBy: { ticketNumber: 'asc' },
-    });
-
-    return entry ?? null;
-  }
-
   updateStatus(
     id: string,
     data: Prisma.RaffleEntryUpdateInput,

@@ -6,7 +6,7 @@ import { Sidebar } from "./sidebar";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen w-full">
+    <div className="flex min-h-screen w-full bg-[#FAFAFA] text-[#0A0A0A]">
       <Sidebar />
       <MobileSidebar />
       <div className="flex min-w-0 flex-1 flex-col">

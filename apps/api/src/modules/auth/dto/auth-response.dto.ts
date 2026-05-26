@@ -1,5 +1,27 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+
+export class AuthUserLocationDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiProperty()
+  slug!: string;
+}
+
+export class AuthUserRoleDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'admin_sucursal' })
+  slug!: string;
+
+  @ApiProperty({ example: 'Administrador de Sucursal' })
+  name!: string;
+}
 
 export class AuthUserDto {
   @ApiProperty({ format: 'uuid' })
@@ -16,6 +38,22 @@ export class AuthUserDto {
 
   @ApiProperty({ enum: Role, enumName: 'Role', example: Role.USER })
   role!: Role;
+
+  @ApiProperty()
+  active!: boolean;
+
+  @ApiPropertyOptional({ type: AuthUserLocationDto, nullable: true })
+  location!: AuthUserLocationDto | null;
+
+  @ApiProperty({ type: [AuthUserRoleDto] })
+  roles!: AuthUserRoleDto[];
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Claves de permisos efectivos. Contiene "*" si el usuario es SUPER_ADMIN.',
+  })
+  permissions!: string[];
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;

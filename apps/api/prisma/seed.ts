@@ -13,9 +13,199 @@ import {
   InventoryMovementType,
   Prisma,
   PrismaClient,
+  ReceiptSeriesType,
+  Role,
 } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
+
+// ─── RBAC catálogo (espejo de src/modules/rbac/rbac.constants.ts) ────────
+// Se duplica aquí únicamente porque el seed se ejecuta con un tsconfig
+// aislado. La sincronización real en producción la hace `RbacBootstrap` en
+// el arranque del API; este bloque garantiza que `db:seed` también deje el
+// catálogo listo en entornos cleanos.
+
+const SEED_PERMISSIONS: Array<{
+  key: string;
+  name: string;
+  description: string;
+  module: string;
+}> = [
+  { key: 'users.view', name: 'Ver usuarios', description: 'Listar y consultar usuarios.', module: 'Usuarios' },
+  { key: 'users.create', name: 'Crear usuarios', description: 'Dar de alta cuentas.', module: 'Usuarios' },
+  { key: 'users.edit', name: 'Editar usuarios', description: 'Actualizar datos, roles y permisos.', module: 'Usuarios' },
+  { key: 'users.delete', name: 'Eliminar usuarios', description: 'Dar de baja cuentas.', module: 'Usuarios' },
+  { key: 'customers.view', name: 'Ver clientes', description: 'Listar y consultar el CRM de clientes.', module: 'Clientes' },
+  { key: 'customers.create', name: 'Crear clientes', description: 'Dar de alta clientes manualmente o desde el POS.', module: 'Clientes' },
+  { key: 'customers.edit', name: 'Editar clientes', description: 'Actualizar datos, notas y membresía.', module: 'Clientes' },
+  { key: 'customers.delete', name: 'Eliminar clientes', description: 'Eliminar clientes (solo SUPER_ADMIN).', module: 'Clientes' },
+  { key: 'products.view', name: 'Ver productos', description: 'Consultar catálogo.', module: 'Productos' },
+  { key: 'products.create', name: 'Crear productos', description: 'Registrar productos.', module: 'Productos' },
+  { key: 'products.edit', name: 'Editar productos', description: 'Modificar productos.', module: 'Productos' },
+  { key: 'products.delete', name: 'Eliminar productos', description: 'Eliminar productos.', module: 'Productos' },
+  { key: 'inventory.view', name: 'Ver inventario', description: 'Consultar stock.', module: 'Inventario' },
+  { key: 'inventory.adjust', name: 'Ajustar inventario', description: 'Movimientos y mermas.', module: 'Inventario' },
+  { key: 'inventory.transfer', name: 'Transferencias', description: 'Transferir entre ubicaciones.', module: 'Inventario' },
+  { key: 'pos.access', name: 'Acceder al POS', description: 'Ingresar al POS asignado.', module: 'POS' },
+  { key: 'pos.sales', name: 'Generar ventas POS', description: 'Cobrar y emitir comprobantes.', module: 'POS' },
+  { key: 'pos.cash.open', name: 'Abrir caja', description: 'Aperturar caja.', module: 'POS' },
+  { key: 'pos.cash.close', name: 'Cerrar caja', description: 'Cerrar caja.', module: 'POS' },
+  { key: 'pos.cash.movements', name: 'Registrar ingresos/egresos de caja', description: 'Ingresos y egresos manuales.', module: 'POS' },
+  { key: 'pos.reports.view', name: 'Ver reportes POS', description: 'KPIs de la sucursal.', module: 'POS' },
+  { key: 'raffles.view', name: 'Ver sorteos', description: 'Consultar sorteos y ganadores.', module: 'Sorteos' },
+  { key: 'raffles.create', name: 'Crear sorteos', description: 'Configurar sorteos.', module: 'Sorteos' },
+  { key: 'raffles.publish', name: 'Publicar sorteos y ganadores', description: 'Oficializar ganadores.', module: 'Sorteos' },
+  { key: 'reports.view', name: 'Ver reportes', description: 'Tableros y KPIs.', module: 'Reportes' },
+  { key: 'rbac.manage', name: 'Administrar roles y permisos', description: 'CRUD de roles y reasignación.', module: 'RBAC' },
+];
+
+const SEED_ROLES: Array<{
+  slug: string;
+  name: string;
+  description: string;
+  permissions: 'ALL' | string[];
+}> = [
+  {
+    slug: 'super_admin',
+    name: 'Super Administrador',
+    description: 'Acceso total al sistema, sin restricción de sucursal.',
+    permissions: 'ALL',
+  },
+  {
+    slug: 'admin_sucursal',
+    name: 'Administrador de Sucursal',
+    description: 'Gestiona usuarios, inventario y ventas únicamente de su sucursal asignada.',
+    permissions: [
+      'users.view', 'users.create', 'users.edit',
+      'customers.view', 'customers.create', 'customers.edit',
+      'products.view', 'products.edit',
+      'inventory.view', 'inventory.adjust', 'inventory.transfer',
+      'pos.access', 'pos.sales', 'pos.cash.open', 'pos.cash.close',
+      'pos.cash.movements', 'pos.reports.view',
+      'raffles.view', 'reports.view',
+    ],
+  },
+  {
+    slug: 'cajero_pos',
+    name: 'Cajero POS',
+    description: 'Operador del punto de venta y caja en la sucursal asignada.',
+    permissions: [
+      'pos.access', 'pos.sales', 'pos.cash.open', 'pos.cash.close',
+      'pos.cash.movements', 'pos.reports.view',
+      'products.view', 'inventory.view',
+      'customers.view', 'customers.create', 'customers.edit',
+    ],
+  },
+  {
+    slug: 'inventario',
+    name: 'Encargado de Inventario',
+    description: 'Gestiona stock, movimientos y transferencias de su ubicación asignada.',
+    permissions: [
+      'inventory.view', 'inventory.adjust', 'inventory.transfer',
+      'products.view',
+    ],
+  },
+];
+
+async function seedRbac(): Promise<{ superAdminRoleId: string }> {
+  console.log('• Catálogo RBAC (permisos y roles oficiales)');
+
+  for (const p of SEED_PERMISSIONS) {
+    await prisma.permission.upsert({
+      where: { key: p.key },
+      create: p,
+      update: { name: p.name, description: p.description, module: p.module },
+    });
+  }
+  console.log(`  ✓ ${SEED_PERMISSIONS.length} permisos sincronizados`);
+
+  const allPerms = await prisma.permission.findMany({
+    select: { id: true, key: true },
+  });
+  const idByKey = new Map(allPerms.map((p) => [p.key, p.id]));
+
+  let superAdminRoleId = '';
+  for (const def of SEED_ROLES) {
+    const role = await prisma.appRole.upsert({
+      where: { slug: def.slug },
+      create: {
+        slug: def.slug,
+        name: def.name,
+        description: def.description,
+        active: true,
+      },
+      update: {
+        name: def.name,
+        description: def.description,
+        active: true,
+      },
+    });
+
+    if (def.slug === 'super_admin') superAdminRoleId = role.id;
+
+    const targetIds =
+      def.permissions === 'ALL'
+        ? allPerms.map((p) => p.id)
+        : def.permissions
+            .map((k) => idByKey.get(k))
+            .filter((id): id is string => !!id);
+
+    // Reemplazo total de permisos por rol oficial.
+    await prisma.appRolePermission.deleteMany({ where: { roleId: role.id } });
+    if (targetIds.length > 0) {
+      await prisma.appRolePermission.createMany({
+        data: targetIds.map((permissionId) => ({
+          roleId: role.id,
+          permissionId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  }
+  console.log(`  ✓ ${SEED_ROLES.length} roles oficiales sincronizados\n`);
+
+  return { superAdminRoleId };
+}
+
+async function seedSuperAdmin(superAdminRoleId: string): Promise<void> {
+  const email = (process.env.SEED_SUPER_ADMIN_EMAIL ?? 'admin@purpura.club')
+    .trim()
+    .toLowerCase();
+  const password = process.env.SEED_SUPER_ADMIN_PASSWORD ?? 'Purpura1234!';
+  const firstName = process.env.SEED_SUPER_ADMIN_FIRST_NAME ?? 'Purpura';
+  const lastName = process.env.SEED_SUPER_ADMIN_LAST_NAME ?? 'Admin';
+
+  console.log(`• Super Admin inicial (${email})`);
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: {
+      email,
+      password: passwordHash,
+      firstName,
+      lastName,
+      role: Role.SUPER_ADMIN,
+      active: true,
+    },
+    update: {
+      role: Role.SUPER_ADMIN,
+      active: true,
+      firstName,
+      lastName,
+    },
+  });
+
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: user.id, roleId: superAdminRoleId } },
+    create: { userId: user.id, roleId: superAdminRoleId },
+    update: {},
+  });
+
+  console.log(`  ✓ Usuario super_admin: ${email} (password env: SEED_SUPER_ADMIN_PASSWORD)\n`);
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -60,6 +250,54 @@ async function upsertLocation(input: UpsertLocationInput) {
       active: true,
     },
   });
+}
+
+/**
+ * Crea (o repone) las series de comprobantes SUNAT-ready para una ubicación.
+ *
+ * Convención usada:
+ *  - Boleta:      `B<scope>` (ej. B001 ecommerce, B101 Ica, B201 Lima)
+ *  - Factura:     `F<scope>` (ej. F001, F101, F201)
+ *  - Nota crédito de boleta:  `BC<scope>` (ej. BC01, BC11, BC21)
+ *  - Nota crédito de factura: `FC<scope>` (ej. FC01, FC11, FC21)
+ *
+ * `inventoryLocationId = null` reserva las series para el canal ecommerce
+ * (igual que `ReceiptsService.issue()` con location=null).
+ */
+async function ensureReceiptSeriesFor(opts: {
+  inventoryLocationId: string | null;
+  label: string;
+  boleta: string;
+  factura: string;
+  ncBoleta: string;
+  ncFactura: string;
+}): Promise<void> {
+  const seriesByType: Array<{ series: string; type: ReceiptSeriesType }> = [
+    { series: opts.boleta, type: ReceiptSeriesType.BOLETA },
+    { series: opts.factura, type: ReceiptSeriesType.FACTURA },
+    { series: opts.ncBoleta, type: ReceiptSeriesType.NOTA_CREDITO },
+    { series: opts.ncFactura, type: ReceiptSeriesType.NOTA_CREDITO },
+  ];
+
+  for (const { series, type } of seriesByType) {
+    await prisma.receiptSeries.upsert({
+      where: { series_type: { series, type } },
+      create: {
+        series,
+        type,
+        inventoryLocationId: opts.inventoryLocationId,
+        nextNumber: 1,
+        active: true,
+      },
+      update: {
+        inventoryLocationId: opts.inventoryLocationId,
+        active: true,
+      },
+    });
+  }
+  console.log(
+    `  ✓ Series ${opts.label}: ${opts.boleta} (boleta), ${opts.factura} (factura), ${opts.ncBoleta}/${opts.ncFactura} (NC)`,
+  );
 }
 
 interface UpsertCategoryInput {
@@ -295,6 +533,10 @@ const MATERIAL_VARIANT: Record<MaterialSlug, string> = {
 async function main() {
   console.log('▶ Seed Púrpura Club — Multi-ubicación\n');
 
+  // 0) RBAC + Super Admin
+  const { superAdminRoleId } = await seedRbac();
+  await seedSuperAdmin(superAdminRoleId);
+
   // 1) UBICACIONES DE INVENTARIO
   console.log('• Ubicaciones de inventario');
   const ecommerceCentral = await upsertLocation({
@@ -312,6 +554,26 @@ async function main() {
   });
   console.log(`  ✓ ${ecommerceCentral.name} (${ecommerceCentral.type})`);
   console.log(`  ✓ ${tiendaIca.name} (${tiendaIca.type})\n`);
+
+  // 1.5) SERIES FISCALES (SUNAT-ready) — boleta, factura, NC por ubicación
+  console.log('• Series fiscales (SUNAT Perú)');
+  await ensureReceiptSeriesFor({
+    inventoryLocationId: null,
+    label: 'Ecommerce',
+    boleta: 'B001',
+    factura: 'F001',
+    ncBoleta: 'BC01',
+    ncFactura: 'FC01',
+  });
+  await ensureReceiptSeriesFor({
+    inventoryLocationId: tiendaIca.id,
+    label: 'Plaza del Sol ICA',
+    boleta: 'B101',
+    factura: 'F101',
+    ncBoleta: 'BC11',
+    ncFactura: 'FC11',
+  });
+  console.log('');
 
   // 2) CATEGORÍAS RAÍZ
   console.log('• Categorías raíz');

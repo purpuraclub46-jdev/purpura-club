@@ -1,17 +1,18 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
-import { LogoMark } from "@/shared/components/brand/logo";
 import { useAuth } from "@/features/auth/hooks/use-auth";
+import { userHasAnyPermission } from "@/stores/auth.store";
 import { useUiStore } from "@/stores/ui.store";
 import {
   isNavGroup,
   navSections,
+  type NavEntry,
   type NavGroup,
   type NavItem,
 } from "../nav.config";
@@ -33,15 +34,18 @@ function MobileLink({
       href={item.href}
       onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium",
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         active
-          ? "bg-primary/15 text-foreground"
-          : "text-muted-foreground hover:bg-surface-strong hover:text-foreground",
+          ? "bg-[#9810FA]/8 text-[#0A0A0A]"
+          : "text-[#0A0A0A]/65 hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]",
         nested && "pl-9",
       )}
     >
       <Icon
-        className={cn("size-4 shrink-0", active ? "text-primary" : "")}
+        className={cn(
+          "size-4 shrink-0",
+          active ? "text-[#9810FA]" : "text-[#0A0A0A]/55",
+        )}
       />
       {item.label}
     </Link>
@@ -73,23 +77,23 @@ function MobileGroup({
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium",
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
           hasActive
-            ? "text-foreground"
-            : "text-muted-foreground hover:bg-surface-strong hover:text-foreground",
+            ? "text-[#0A0A0A]"
+            : "text-[#0A0A0A]/65 hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]",
         )}
         aria-expanded={open}
       >
         <Icon
           className={cn(
             "size-4 shrink-0",
-            hasActive ? "text-primary" : "",
+            hasActive ? "text-[#9810FA]" : "text-[#0A0A0A]/55",
           )}
         />
         <span className="flex-1 text-left">{group.label}</span>
         <ChevronDown
           className={cn(
-            "size-3.5 shrink-0 transition-transform",
+            "size-3.5 shrink-0 text-[#0A0A0A]/40 transition-transform",
             open && "rotate-180",
           )}
         />
@@ -132,43 +136,65 @@ export function MobileSidebar() {
     >
       <div
         className={cn(
-          "absolute inset-0 bg-black/75 backdrop-blur-sm transition-opacity",
+          "absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity",
           open ? "opacity-100" : "opacity-0",
         )}
         onClick={() => setOpen(false)}
       />
       <aside
         className={cn(
-          "absolute left-0 top-0 flex h-full w-72 flex-col border-r border-border bg-surface transition-transform",
+          "absolute left-0 top-0 flex h-full w-72 flex-col border-r border-[#11111111] bg-white shadow-2xl transition-transform",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-16 items-center justify-between border-b border-border px-4">
-          <div className="flex items-center gap-2.5">
-            <LogoMark size={32} className="brand-glow rounded-lg" />
-            <span className="text-sm font-semibold tracking-tight">
-              Purpura Admin
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
+        <div className="flex h-16 items-center justify-between border-b border-[#11111111] px-4">
+          <Image
+            src="/images/logotipo.svg"
+            alt="Purpura Club"
+            width={160}
+            height={32}
+            priority
+            className="h-7 w-auto"
+          />
+          <button
+            type="button"
             onClick={() => setOpen(false)}
             aria-label="Cerrar menú"
+            className="rounded-md p-2 text-[#0A0A0A]/60 transition-colors hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]"
           >
             <X className="size-5" />
-          </Button>
+          </button>
         </div>
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
           {navSections.map((section) => {
-            const visible = section.entries.filter((entry) =>
-              !entry.roles ||
-              (user ? entry.roles.includes(user.role) : false),
-            );
+            const filterEntry = (entry: NavEntry): boolean => {
+              if (entry.roles && (!user || !entry.roles.includes(user.role))) {
+                return false;
+              }
+              if (entry.anyPermission && entry.anyPermission.length > 0) {
+                if (!userHasAnyPermission(user, entry.anyPermission)) {
+                  return false;
+                }
+              }
+              return true;
+            };
+
+            const visible = section.entries
+              .map((entry) => {
+                if (!filterEntry(entry)) return null;
+                if (isNavGroup(entry)) {
+                  const items = entry.items.filter(filterEntry);
+                  if (items.length === 0) return null;
+                  return { ...entry, items } as NavGroup;
+                }
+                return entry;
+              })
+              .filter((e): e is NavEntry => e !== null);
+
             if (visible.length === 0) return null;
             return (
               <div key={section.title} className="space-y-1">
-                <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground/70">
+                <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/40">
                   {section.title}
                 </p>
                 {visible.map((entry) =>

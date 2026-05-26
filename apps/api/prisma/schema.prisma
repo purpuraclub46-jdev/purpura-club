@@ -19,35 +19,155 @@ enum Role {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
+  id           String  @id @default(uuid()) @db.Uuid
+  email        String  @unique
   password     String
   firstName    String
   lastName     String
-  role         Role     @default(USER)
+  // Nivel de acceso legacy/coarse-grained (USER/ADMIN/SUPER_ADMIN).
+  // El RBAC dinámico (AppRole + Permission) es la fuente de verdad para
+  // permisos efectivos; este campo solo se conserva por compatibilidad
+  // con el guard de roles existente y como sello rápido de elegibilidad
+  // administrativa para JWTs.
+  role         Role    @default(USER)
   refreshToken String?
 
   // Referido: quién invitó a este usuario. Si se llena al registro,
   // el primer pedido elegible recompensa al referrer.
   referredByUserId String? @db.Uuid
 
+  // DNI/documento de identidad — requerido para la entrega de premios.
+  // Opcional para no romper usuarios pre-existentes.
+  dni String? @unique
+
+  // RBAC enterprise: ubicación asignada (sucursal/almacén/ecommerce).
+  // Null = sin restricción de sucursal (SUPER_ADMIN típicamente).
+  inventoryLocationId String? @db.Uuid
+
+  // Activación de la cuenta. Inactivo = bloqueado para login.
+  active Boolean @default(true)
+
+  // Último login exitoso (auditoría).
+  lastLoginAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  inventoryLocation InventoryLocation? @relation("UserAssignedLocation", fields: [inventoryLocationId], references: [id], onDelete: SetNull)
+
   entries            RaffleEntry[]
   wonRaffle          Raffle[]            @relation("RaffleWinner")
+  wonPrizes          RafflePrize[]       @relation("PrizeWinner")
   orders             Order[]
   inventoryMovements InventoryMovement[]
   inventoryTransfers InventoryTransfer[]
 
-  membership      Membership?
-  benefitLogs     MembershipBenefitLog[]
-  referralsMade   Referral[]              @relation("ReferralFrom")
+  membership       Membership?
+  benefitLogs      MembershipBenefitLog[]
+  referralsMade    Referral[]             @relation("ReferralFrom")
   referralReceived Referral?              @relation("ReferralTo")
+
+  // RBAC dinámico
+  roles             UserRole[]
+  customPermissions UserPermission[]
+
+  // CRM
+  customerProfile Customer? @relation("UserCustomerProfile")
+
+  // POS
+  openedCashSessions   POSCashSession[]  @relation("CashSessionOpenedBy")
+  closedCashSessions   POSCashSession[]  @relation("CashSessionClosedBy")
+  createdCashMovements POSCashMovement[] @relation("CashMovementCreatedBy")
+  createdCreditNotes   POSCreditNote[]   @relation("CreditNoteCreatedBy")
 
   @@index([email])
   @@index([referredByUserId])
+  @@index([inventoryLocationId])
+  @@index([active])
   @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// RBAC ENTERPRISE — Roles, permisos, asignaciones
+// ─────────────────────────────────────────────
+
+model AppRole {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String  @unique
+  description String?
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permissions AppRolePermission[]
+  users       UserRole[]
+
+  @@index([active])
+  @@map("app_roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  name        String
+  description String?
+  module      String
+
+  createdAt DateTime @default(now())
+
+  roles AppRolePermission[]
+  users UserPermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model AppRolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  role       AppRole    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("app_role_permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  user User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role AppRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// Override puntual de un permiso para un usuario (allow o deny explícito).
+// allowed=true => fuerza el permiso aunque su rol no lo tenga.
+// allowed=false => revoca el permiso aunque su rol lo otorgue.
+model UserPermission {
+  userId       String  @db.Uuid
+  permissionId String  @db.Uuid
+  allowed      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@index([permissionId])
+  @@map("user_permissions")
 }
 
 // ─────────────────────────────────────────────
@@ -109,10 +229,45 @@ model Raffle {
 
   winner  User?         @relation("RaffleWinner", fields: [winnerUserId], references: [id], onDelete: SetNull)
   entries RaffleEntry[]
+  prizes  RafflePrize[]
 
   @@index([status, visibility])
   @@index([startDate])
   @@map("raffles")
+}
+
+// Cada sorteo puede tener N premios (1° iPhone, 2° Perfume, 3° Collar...).
+// El ganador se asigna manualmente con el número de ticket exportado en Excel.
+// publishedAt vacío = ya hay ganador interno, pero NO publicado aún.
+model RafflePrize {
+  id          String  @id @default(uuid()) @db.Uuid
+  raffleId    String  @db.Uuid
+  title       String
+  description String? @db.Text
+  image       String?
+  position    Int
+
+  winnerUserId       String? @db.Uuid
+  winnerEntryId      String? @unique @db.Uuid
+  winnerTicketNumber Int?
+
+  winnerPublished    Boolean   @default(false)
+  winnerPhoto        String?
+  winnerVideo        String?
+  winnerAnnouncement String?   @db.Text
+  publishedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  raffle      Raffle       @relation(fields: [raffleId], references: [id], onDelete: Cascade)
+  winnerUser  User?        @relation("PrizeWinner", fields: [winnerUserId], references: [id], onDelete: SetNull)
+  winnerEntry RaffleEntry? @relation("PrizeWinningEntry", fields: [winnerEntryId], references: [id], onDelete: SetNull)
+
+  @@unique([raffleId, position])
+  @@index([raffleId, winnerPublished])
+  @@index([winnerUserId])
+  @@map("raffle_prizes")
 }
 
 model RaffleEntry {
@@ -129,9 +284,10 @@ model RaffleEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  raffle Raffle @relation(fields: [raffleId], references: [id], onDelete: Cascade)
-  order  Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  raffle   Raffle       @relation(fields: [raffleId], references: [id], onDelete: Cascade)
+  order    Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  wonPrize RafflePrize? @relation("PrizeWinningEntry")
 
   @@unique([raffleId, ticketNumber])
   @@index([userId, status])
@@ -164,8 +320,8 @@ model Category {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children Category[] @relation("CategoryHierarchy")
+  parent   Category?         @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[]        @relation("CategoryHierarchy")
   products ProductCategory[]
 
   @@index([group, active])
@@ -184,7 +340,7 @@ model Product {
   // Precio normal (precio público base).
   price Decimal @db.Decimal(10, 2)
   // Costo interno (no público).
-  cost  Decimal @db.Decimal(10, 2) @default(0)
+  cost  Decimal @default(0) @db.Decimal(10, 2)
 
   // Configuración de oferta dinámica. El precio de oferta y el precio miembro
   // se computan al vuelo a partir de estos campos.
@@ -199,14 +355,15 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  images        ProductImage[]
-  categories    ProductCategory[]
-  variants      ProductVariant[]
-  availability  ProductAvailability[]
-  stock         InventoryStock[]
-  movements     InventoryMovement[]
-  transferItems InventoryTransferItem[]
-  orderItems    OrderItem[]
+  images          ProductImage[]
+  categories      ProductCategory[]
+  variants        ProductVariant[]
+  availability    ProductAvailability[]
+  stock           InventoryStock[]
+  movements       InventoryMovement[]
+  transferItems   InventoryTransferItem[]
+  orderItems      OrderItem[]
+  creditNoteItems POSCreditNoteItem[]
 
   @@index([active, featured])
   @@index([sku])
@@ -295,12 +452,17 @@ model InventoryLocation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  stock         InventoryStock[]
-  movements     InventoryMovement[]
-  orders        Order[]
-  availability  ProductAvailability[]
-  transfersFrom InventoryTransfer[] @relation("TransferFromLocation")
-  transfersTo   InventoryTransfer[] @relation("TransferToLocation")
+  stock            InventoryStock[]
+  movements        InventoryMovement[]
+  orders           Order[]
+  availability     ProductAvailability[]
+  transfersFrom    InventoryTransfer[]   @relation("TransferFromLocation")
+  transfersTo      InventoryTransfer[]   @relation("TransferToLocation")
+  assignedUsers    User[]                @relation("UserAssignedLocation")
+  primaryCustomers Customer[]            @relation("CustomerPrimaryLocation")
+  cashRegisters    POSCashRegister[]     @relation("LocationCashRegisters")
+  receiptSeries    ReceiptSeries[]       @relation("LocationReceiptSeries")
+  creditNotes      POSCreditNote[]       @relation("LocationCreditNotes")
 
   @@index([active, type])
   @@map("inventory_locations")
@@ -424,31 +586,111 @@ enum OrderPaymentMethod {
   CARD
 }
 
+enum OrderChannel {
+  ECOMMERCE
+  POS
+}
+
 model Order {
   id                  String             @id @default(uuid()) @db.Uuid
   number              String             @unique
   userId              String?            @db.Uuid
+  customerId          String?            @db.Uuid
   inventoryLocationId String?            @db.Uuid
+  cashSessionId       String?            @db.Uuid
+  channel             OrderChannel       @default(ECOMMERCE)
+  /// Suma bruta de items (qty × unitPrice). En POS con descuento manual
+  /// también es el bruto antes del descuento. En el sistema fiscal peruano
+  /// los precios YA incluyen IGV, por lo que este valor es CON IGV.
   subtotal            Decimal            @db.Decimal(10, 2)
-  discount            Decimal            @db.Decimal(10, 2) @default(0)
+  discount            Decimal            @default(0) @db.Decimal(10, 2)
+  /// Total final cobrado (subtotal - discount). Incluye IGV.
   total               Decimal            @db.Decimal(10, 2)
+  /// Pago principal — para órdenes ecommerce simples. En POS con pago mixto
+  /// se llena con el método de mayor monto y los detalles van en `payments[]`.
   paymentMethod       OrderPaymentMethod
   status              OrderStatus        @default(PENDING)
   notes               String?
 
+  // ─── FISCAL ENGINE PERÚ ───────────────────────────────────────────────
+  /// Si los precios almacenados (Product.price, OrderItem.unitPrice) ya
+  /// incluyen IGV. Default true (estándar retail Perú).
+  pricesIncludeIgv  Boolean @default(true)
+  /// Tasa IGV aplicada (18.00 por defecto en Perú). Se persiste para no
+  /// recalcular si cambia la tasa en el futuro.
+  igvRate           Decimal @default(18.00) @db.Decimal(5, 2)
+  /// Base imponible (subtotal SIN IGV) — para reportes SUNAT y XML UBL.
+  /// = round2(total / (1 + igvRate/100))
+  subtotalUntaxed   Decimal @default(0) @db.Decimal(10, 2)
+  /// Monto de IGV contenido en el total. = round2(total - subtotalUntaxed)
+  igvAmount         Decimal @default(0) @db.Decimal(10, 2)
+
+  // ─── SUNAT-ready receipt + snapshot fiscal del cliente ────────────────
+  receiptType     ReceiptSeriesType?
+  receiptSeries   String?
+  receiptNumber   Int?
+  receiptIssuedAt DateTime?
+
+  /// Snapshot fiscal del cliente al momento de la emisión. Se persiste
+  /// independientemente del Customer para que el comprobante quede
+  /// inmutable aunque el cliente se edite o elimine después.
+  customerDocumentType   CustomerDocumentType?
+  customerDocumentNumber String?
+  customerLegalName      String?
+  customerFiscalAddress  String?
+  customerEmail          String?
+
+  // ─── SUNAT submission (arquitectura preparada, integración futura) ───
+  sunatStatus         SunatStatus @default(PENDING)
+  sunatXml            String?     @db.Text
+  sunatSignedXml      String?     @db.Text
+  sunatHash           String?
+  sunatCdr            String?     @db.Text
+  sunatErrorCode      String?
+  sunatErrorMessage   String?
+  sunatSubmittedAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  location      InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: SetNull)
-  items         OrderItem[]
-  raffleEntries RaffleEntry[]
-  benefitLogs   MembershipBenefitLog[]
+  user                User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  customer            Customer?              @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: SetNull)
+  location            InventoryLocation?     @relation(fields: [inventoryLocationId], references: [id], onDelete: SetNull)
+  cashSession         POSCashSession?        @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  items               OrderItem[]
+  payments            OrderPayment[]
+  raffleEntries       RaffleEntry[]
+  benefitLogs         MembershipBenefitLog[]
+  cashMovements       POSCashMovement[]
+  creditNotes         POSCreditNote[]        @relation("OrderCreditNotes")
+  exchangeCreditNotes POSCreditNote[]        @relation("OrderExchangeCreditNotes")
 
   @@index([userId, status])
+  @@index([customerId, status])
   @@index([inventoryLocationId, status])
+  @@index([channel, status, createdAt])
+  @@index([cashSessionId])
   @@index([status, createdAt])
+  @@index([sunatStatus])
+  @@index([receiptType, receiptSeries, receiptNumber])
   @@map("orders")
+}
+
+/// Pago individual de una orden. Para POS soporta pago mixto (efectivo + Yape, etc.).
+/// Para ecommerce simple suele haber un solo registro espejo de `Order.paymentMethod`.
+model OrderPayment {
+  id        String             @id @default(uuid()) @db.Uuid
+  orderId   String             @db.Uuid
+  method    OrderPaymentMethod
+  amount    Decimal            @db.Decimal(10, 2)
+  reference String?
+  createdAt DateTime           @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([method, createdAt])
+  @@map("order_payments")
 }
 
 model OrderItem {
@@ -456,13 +698,28 @@ model OrderItem {
   orderId   String  @db.Uuid
   productId String  @db.Uuid
   quantity  Int
+  /// Precio unitario CON IGV (lo que se muestra al cliente).
   unitPrice Decimal @db.Decimal(10, 2)
+  /// quantity × unitPrice (CON IGV).
   subtotal  Decimal @db.Decimal(10, 2)
+
+  // ─── Desglose IGV por línea (SUNAT XML UBL requiere este breakdown) ──
+  /// Tasa IGV aplicada a esta línea (típicamente 18.00). Permite líneas
+  /// exoneradas/inafectas en el futuro (0.00).
+  igvRate          Decimal @default(18.00) @db.Decimal(5, 2)
+  /// Precio unitario SIN IGV. = round2(unitPrice / (1 + igvRate/100))
+  unitPriceUntaxed Decimal @default(0) @db.Decimal(10, 2)
+  /// Subtotal SIN IGV. = round2(quantity × unitPriceUntaxed)
+  subtotalUntaxed  Decimal @default(0) @db.Decimal(10, 2)
+  /// IGV contenido en la línea. = round2(subtotal - subtotalUntaxed)
+  igvAmount        Decimal @default(0) @db.Decimal(10, 2)
 
   createdAt DateTime @default(now())
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  creditNoteItems POSCreditNoteItem[] @relation("OrderItemReturns")
 
   @@index([orderId])
   @@index([productId])
@@ -517,11 +774,11 @@ model MembershipBenefitLog {
 }
 
 model Referral {
-  id              String  @id @default(uuid()) @db.Uuid
-  referrerUserId  String  @db.Uuid
-  referredUserId  String  @unique @db.Uuid
-  rewarded        Boolean @default(false)
-  rewardedAt      DateTime?
+  id             String    @id @default(uuid()) @db.Uuid
+  referrerUserId String    @db.Uuid
+  referredUserId String    @unique @db.Uuid
+  rewarded       Boolean   @default(false)
+  rewardedAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -531,4 +788,369 @@ model Referral {
 
   @@index([referrerUserId, rewarded])
   @@map("referrals")
+}
+
+// ─────────────────────────────────────────────
+// CRM — CUSTOMERS
+// ─────────────────────────────────────────────
+//
+// Customer = perfil COMERCIAL del cliente (CRM).
+// User     = identidad de AUTENTICACIÓN.
+//
+// Un Customer puede o no estar enlazado a un User:
+//  - Cliente que se registró por ecommerce: tiene userId.
+//  - Cliente walk-in creado desde POS: userId = null.
+//  - El POS futuro podrá vincular un Customer existente a una cuenta User
+//    en cualquier momento.
+//
+// Las estadísticas (totalSpent, lastPurchaseAt, etc.) se calculan en runtime
+// agregando órdenes y participaciones — no se denormalizan para evitar drift.
+
+enum CustomerGender {
+  MASCULINO
+  FEMENINO
+  OTRO
+}
+
+/// Tipos de documento fiscal soportados (SUNAT Perú).
+///  - DNI: persona natural peruana (8 dígitos). Asociado a BOLETA.
+///  - RUC: persona jurídica o natural con negocio (11 dígitos). Requerido para FACTURA.
+///  - CE: carnet de extranjería.
+///  - PASSPORT: pasaporte (extranjeros).
+enum CustomerDocumentType {
+  DNI
+  RUC
+  CE
+  PASSPORT
+}
+
+model Customer {
+  id     String  @id @default(uuid()) @db.Uuid
+  // Vínculo opcional con la cuenta de autenticación.
+  userId String? @unique @db.Uuid
+
+  firstName String
+  lastName  String
+  // fullName se mantiene denormalizado y se sincroniza en cada update — usado
+  // para búsquedas insensibles a mayúsculas/acentos y ordenamiento alfabético.
+  fullName  String
+
+  email String?
+  phone String?
+  dni   String? @unique
+
+  // ─── Datos fiscales (SUNAT-ready) ─────────────────────────────────────
+  /// Tipo de documento fiscal. Por defecto DNI (persona natural).
+  documentType   CustomerDocumentType @default(DNI)
+  /// RUC (11 dígitos). Si está presente el cliente puede recibir factura.
+  /// Único globalmente cuando se llena.
+  ruc            String?              @unique
+  /// Razón social (para facturas). En personas naturales = nombre legal.
+  legalName      String?
+  /// Dirección fiscal (requerida para facturas SUNAT).
+  fiscalAddress  String?
+
+  birthDate DateTime?
+  gender    CustomerGender?
+
+  notes String? @db.Text
+
+  // Membresía denormalizada para el POS / búsqueda rápida.
+  // La fuente de verdad sigue siendo el modelo Membership cuando hay userId.
+  isMember            Boolean   @default(false)
+  membershipExpiresAt DateTime?
+
+  active Boolean @default(true)
+
+  // Sucursal de captación (POS). Null = ecommerce o sin asignar.
+  primaryLocationId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User?              @relation("UserCustomerProfile", fields: [userId], references: [id], onDelete: SetNull)
+  primaryLocation InventoryLocation? @relation("CustomerPrimaryLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
+
+  orders Order[] @relation("CustomerOrders")
+
+  @@index([active])
+  @@index([isMember, active])
+  @@index([primaryLocationId, active])
+  @@index([fullName])
+  @@index([phone])
+  @@index([email])
+  @@index([documentType, ruc])
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// POS ENGINE — Cajas, sesiones, movimientos, series de comprobantes
+// ─────────────────────────────────────────────
+
+/// Caja física de un POS. Cada InventoryLocation tiene una caja principal
+/// auto-creada en su `create()`. Las locations pueden tener N cajas.
+model POSCashRegister {
+  id                  String  @id @default(uuid()) @db.Uuid
+  inventoryLocationId String  @db.Uuid
+  name                String
+  active              Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  location InventoryLocation @relation("LocationCashRegisters", fields: [inventoryLocationId], references: [id], onDelete: Cascade)
+  sessions POSCashSession[]
+
+  @@unique([inventoryLocationId, name])
+  @@index([inventoryLocationId, active])
+  @@map("pos_cash_registers")
+}
+
+enum POSCashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+/// Sesión de caja del turno. Una sola sesión OPEN por caja a la vez.
+model POSCashSession {
+  id               String               @id @default(uuid()) @db.Uuid
+  cashRegisterId   String               @db.Uuid
+  openedByUserId   String               @db.Uuid
+  closedByUserId   String?              @db.Uuid
+  openingAmount    Decimal              @db.Decimal(10, 2)
+  /// Efectivo declarado al cerrar (lo que el cajero contó).
+  closingAmount    Decimal?             @db.Decimal(10, 2)
+  /// Efectivo esperado = apertura + ingresos efectivo - egresos efectivo + ventas efectivo.
+  expectedAmount   Decimal?             @db.Decimal(10, 2)
+  /// closingAmount - expectedAmount (positivo = sobrante, negativo = faltante).
+  differenceAmount Decimal?             @db.Decimal(10, 2)
+  status           POSCashSessionStatus @default(OPEN)
+  openedAt         DateTime             @default(now())
+  closedAt         DateTime?
+  notes            String?
+
+  cashRegister POSCashRegister   @relation(fields: [cashRegisterId], references: [id], onDelete: Cascade)
+  openedBy     User              @relation("CashSessionOpenedBy", fields: [openedByUserId], references: [id], onDelete: Restrict)
+  closedBy     User?             @relation("CashSessionClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  movements    POSCashMovement[]
+  orders       Order[]
+  creditNotes  POSCreditNote[]   @relation("CashSessionCreditNotes")
+
+  @@index([cashRegisterId, status])
+  @@index([status, openedAt])
+  @@map("pos_cash_sessions")
+}
+
+enum POSCashMovementType {
+  OPENING
+  SALE
+  INCOME
+  EXPENSE
+  CLOSING
+}
+
+/// Movimiento auditado de la caja. Cubre apertura, ventas, ingresos manuales
+/// (cambio adicional, ajustes), egresos (movilidad, limpieza, retiro), cierre
+/// y devoluciones (REFUND, salida de efectivo por nota de crédito).
+model POSCashMovement {
+  id              String              @id @default(uuid()) @db.Uuid
+  sessionId       String              @db.Uuid
+  type            POSCashMovementType
+  amount          Decimal             @db.Decimal(10, 2)
+  reason          String?
+  notes           String?
+  orderId         String?             @db.Uuid
+  /// Si el movimiento proviene de una nota de crédito (devolución/cambio/anulación).
+  creditNoteId    String?             @db.Uuid
+  createdByUserId String?             @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  session    POSCashSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  order      Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  creditNote POSCreditNote? @relation("CreditNoteCashMovements", fields: [creditNoteId], references: [id], onDelete: SetNull)
+  createdBy  User?          @relation("CashMovementCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, createdAt])
+  @@index([type, createdAt])
+  @@index([orderId])
+  @@index([creditNoteId])
+  @@map("pos_cash_movements")
+}
+
+enum ReceiptSeriesType {
+  BOLETA
+  FACTURA
+  /// Nota de crédito electrónica (NCR-E SUNAT). Se asocia a un comprobante
+  /// original (BOLETA o FACTURA) para devoluciones, anulaciones o cambios.
+  NOTA_CREDITO
+  /// Nota de débito electrónica (NDE-E SUNAT). Para ajustes posteriores
+  /// (intereses, cargos adicionales). Arquitectura preparada, sin uso aún.
+  NOTA_DEBITO
+  /// Comprobante interno NO-SUNAT — usado solo en flujos legacy.
+  NOTA_VENTA
+}
+
+/// Estado del envío del comprobante a SUNAT. Arquitectura preparada;
+/// la integración real (firma XML, envío al PSE/OSE, recepción CDR) se
+/// implementa en un sprint posterior.
+enum SunatStatus {
+  /// Comprobante emitido localmente, aún no enviado a SUNAT.
+  PENDING
+  /// Enviado a SUNAT/PSE, esperando CDR.
+  SUBMITTED
+  /// Aceptado por SUNAT (CDR recibido con código 0).
+  ACCEPTED
+  /// Aceptado con observaciones (CDR con código 100-999).
+  OBSERVED
+  /// Rechazado por SUNAT (CDR con código ≥ 2000 o error de envío).
+  REJECTED
+  /// El comprobante fue anulado mediante comunicación de baja.
+  CANCELLED
+}
+
+/// Serie de comprobantes asignada a una sucursal (o al ecommerce si
+/// `inventoryLocationId` es null). Soporta numeración SUNAT-ready con
+/// `nextNumber` incrementado atómicamente al emitir.
+model ReceiptSeries {
+  id                  String            @id @default(uuid()) @db.Uuid
+  inventoryLocationId String?           @db.Uuid
+  type                ReceiptSeriesType
+  series              String
+  nextNumber          Int               @default(1)
+  active              Boolean           @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  location InventoryLocation? @relation("LocationReceiptSeries", fields: [inventoryLocationId], references: [id], onDelete: Cascade)
+
+  @@unique([series, type])
+  @@index([inventoryLocationId, type, active])
+  @@map("receipt_series")
+}
+
+// ─────────────────────────────────────────────
+// POS — NOTAS DE CRÉDITO / DEVOLUCIONES / ANULACIONES
+// ─────────────────────────────────────────────
+//
+// POSCreditNote = comprobante interno (futuro SUNAT NCR-E) que documenta una
+// devolución total, parcial, cambio de producto o anulación de venta.
+//
+// Cada NC:
+//   - Revierte stock atómicamente con CAS sobre `InventoryStock` y crea
+//     `InventoryMovement.RESTOCK`.
+//   - Registra `POSCashMovement.REFUND` con `creditNoteId` para impactar caja.
+//   - Para FULL_RETURN / SALE_CANCELLATION marca la orden original como
+//     `REFUNDED` y libera tickets de raffle + (smart-auto) revierte membresía
+//     solo si era la única compra calificada del cliente.
+//   - Para PRODUCT_EXCHANGE, opcionalmente enlaza con una nueva orden
+//     (`exchangeOrderId`) creada en el mismo flujo.
+
+enum POSCreditNoteType {
+  FULL_RETURN
+  PARTIAL_RETURN
+  PRODUCT_EXCHANGE
+  SALE_CANCELLATION
+}
+
+model POSCreditNote {
+  id                  String  @id @default(uuid()) @db.Uuid
+  /// Número interno NC-XXXXXXXX. Único global.
+  number              String  @unique
+  orderId             String  @db.Uuid
+  /// Si la nota es un PRODUCT_EXCHANGE, esta es la nueva orden generada.
+  exchangeOrderId     String? @db.Uuid
+  inventoryLocationId String  @db.Uuid
+  /// Sesión de caja donde se procesa (opcional para casos administrativos).
+  cashSessionId       String? @db.Uuid
+  createdByUserId     String  @db.Uuid
+
+  type   POSCreditNoteType
+  reason String
+  notes  String?           @db.Text
+
+  /// Monto total devuelto (suma de items.subtotal CON IGV). En
+  /// SALE_CANCELLATION coincide con order.total.
+  subtotal     Decimal @db.Decimal(10, 2)
+  total        Decimal @db.Decimal(10, 2)
+  /// Efectivo realmente entregado al cliente. En EXCHANGE puede ser 0 o la diferencia.
+  refundedCash Decimal @default(0) @db.Decimal(10, 2)
+
+  // ─── FISCAL ENGINE (espejo de Order) ─────────────────────────────────
+  pricesIncludeIgv  Boolean @default(true)
+  igvRate           Decimal @default(18.00) @db.Decimal(5, 2)
+  subtotalUntaxed   Decimal @default(0) @db.Decimal(10, 2)
+  igvAmount         Decimal @default(0) @db.Decimal(10, 2)
+
+  // ─── SUNAT-ready (integración futura) ────────────────────────────────
+  /// Tipo del comprobante NC. Típicamente NOTA_CREDITO. Se asigna al emitir.
+  receiptType     ReceiptSeriesType?
+  receiptSeries   String?
+  receiptNumber   Int?
+  receiptIssuedAt DateTime?
+
+  /// Snapshot fiscal del cliente (copia de la orden original al momento NC).
+  customerDocumentType   CustomerDocumentType?
+  customerDocumentNumber String?
+  customerLegalName      String?
+  customerFiscalAddress  String?
+  customerEmail          String?
+
+  /// SUNAT submission state (igual que Order).
+  sunatStatus       SunatStatus @default(PENDING)
+  sunatXml          String?     @db.Text
+  sunatSignedXml    String?     @db.Text
+  sunatHash         String?
+  sunatCdr          String?     @db.Text
+  sunatErrorCode    String?
+  sunatErrorMessage String?
+  sunatSubmittedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  order         Order               @relation("OrderCreditNotes", fields: [orderId], references: [id], onDelete: Restrict)
+  exchangeOrder Order?              @relation("OrderExchangeCreditNotes", fields: [exchangeOrderId], references: [id], onDelete: SetNull)
+  location      InventoryLocation   @relation("LocationCreditNotes", fields: [inventoryLocationId], references: [id], onDelete: Restrict)
+  cashSession   POSCashSession?     @relation("CashSessionCreditNotes", fields: [cashSessionId], references: [id], onDelete: SetNull)
+  createdBy     User                @relation("CreditNoteCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  items         POSCreditNoteItem[]
+  cashMovements POSCashMovement[]   @relation("CreditNoteCashMovements")
+
+  @@index([orderId])
+  @@index([exchangeOrderId])
+  @@index([inventoryLocationId, createdAt])
+  @@index([cashSessionId])
+  @@index([type, createdAt])
+  @@index([sunatStatus])
+  @@index([receiptType, receiptSeries, receiptNumber])
+  @@map("pos_credit_notes")
+}
+
+model POSCreditNoteItem {
+  id           String  @id @default(uuid()) @db.Uuid
+  creditNoteId String  @db.Uuid
+  /// Item original devuelto (puede ser null si se importó manualmente).
+  orderItemId  String? @db.Uuid
+  productId    String  @db.Uuid
+  quantity     Int
+  unitPrice    Decimal @db.Decimal(10, 2)
+  subtotal     Decimal @db.Decimal(10, 2)
+
+  // ─── Desglose IGV por línea (espejo de OrderItem) ───────────────────
+  igvRate          Decimal @default(18.00) @db.Decimal(5, 2)
+  unitPriceUntaxed Decimal @default(0) @db.Decimal(10, 2)
+  subtotalUntaxed  Decimal @default(0) @db.Decimal(10, 2)
+  igvAmount        Decimal @default(0) @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  creditNote POSCreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  orderItem  OrderItem?    @relation("OrderItemReturns", fields: [orderItemId], references: [id], onDelete: SetNull)
+  product    Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([creditNoteId])
+  @@index([productId])
+  @@index([orderItemId])
+  @@map("pos_credit_note_items")
 }

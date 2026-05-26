@@ -2,14 +2,29 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { Role } from "@/types/api";
+import type {
+  AuthLocationSummary,
+  AuthRoleSummary,
+  Role,
+} from "@/types/api";
 
 export interface AuthUser {
   id: string;
   email: string;
   firstName: string;
   lastName: string;
+  /** Nivel de acceso legacy (USER/ADMIN/SUPER_ADMIN). */
   role: Role;
+  active?: boolean;
+  location?: AuthLocationSummary | null;
+  roles?: AuthRoleSummary[];
+  /**
+   * Permisos efectivos. Contiene exactamente ["*"] si el usuario es
+   * SUPER_ADMIN — usar los helpers `userHasPermission` / `userHasAnyPermission`
+   * para evaluar de forma segura. Puede venir `undefined` en sesiones
+   * persistidas anteriores al rollout RBAC o en usuarios legacy.
+   */
+  permissions?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -81,3 +96,36 @@ export const getAccessToken = (): string | undefined =>
 
 export const getRefreshToken = (): string | undefined =>
   useAuthStore.getState().tokens?.refreshToken;
+
+/**
+ * Evalúa si el usuario actual tiene un permiso específico.
+ * SUPER_ADMIN (`permissions = ["*"]` o `role === "SUPER_ADMIN"`) siempre pasa.
+ * Defensivo frente a `permissions: undefined` (sesiones legacy) — degrada al
+ * nivel de acceso para no romper a un usuario que aún no tiene RBAC resuelto.
+ */
+export const userHasPermission = (
+  user: AuthUser | null,
+  key: string,
+): boolean => {
+  if (!user) return false;
+  if (user.role === "SUPER_ADMIN") return true;
+  const permissions = user.permissions ?? [];
+  if (permissions.includes("*")) return true;
+  return permissions.includes(key);
+};
+
+/**
+ * Evalúa si el usuario tiene al menos uno de los permisos indicados.
+ * Defensivo: trata `permissions` undefined como un array vacío.
+ */
+export const userHasAnyPermission = (
+  user: AuthUser | null,
+  keys: readonly string[],
+): boolean => {
+  if (!user) return false;
+  if (user.role === "SUPER_ADMIN") return true;
+  const permissions = user.permissions ?? [];
+  if (permissions.includes("*")) return true;
+  if (keys.length === 0) return true;
+  return keys.some((k) => permissions.includes(k));
+};

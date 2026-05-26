@@ -4,11 +4,16 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  InventoryLocationType,
+  Prisma,
+  ReceiptSeriesType,
+} from '@prisma/client';
 import {
   Paginated,
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
+import { PrismaService } from '../../prisma/prisma.service';
 import { generateUniqueSlug, slugify } from '../../common/utils/slug.util';
 import { CreateInventoryLocationDto } from './dto/create-inventory-location.dto';
 import { InventoryLocationQueryDto } from './dto/inventory-location-query.dto';
@@ -23,7 +28,10 @@ import {
 export class InventoryLocationsService {
   private readonly logger = new Logger(InventoryLocationsService.name);
 
-  constructor(private readonly repository: InventoryLocationsRepository) {}
+  constructor(
+    private readonly repository: InventoryLocationsRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async create(
     dto: CreateInventoryLocationDto,
@@ -42,10 +50,120 @@ export class InventoryLocationsService {
       this.logger.log(
         `Inventory location created ${created.id} (${created.slug}, ${created.type})`,
       );
+
+      // Auto-provisioning enterprise: cada ubicación nueva recibe su caja
+      // principal y una serie de comprobantes (BOLETA por defecto).
+      // Es best-effort — los errores se loguean pero no abortan la creación
+      // de la ubicación; el admin puede crear estos recursos a mano si falla.
+      try {
+        await this.provisionPosResources(created);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Auto-provisioning POS para ${created.slug} falló: ${msg}`,
+        );
+      }
+
       return this.toResponse({ ...created, _count: { stock: 0 } });
     } catch (error) {
       throw this.translateUniqueSlug(error);
     }
+  }
+
+  /**
+   * Crea automáticamente la caja principal y la serie de comprobantes default
+   * para una ubicación recién creada. Idempotente: si ya existen, no duplica.
+   *
+   * Reglas por tipo:
+   *  - SUCURSAL  → caja física principal + serie B### (POS físico).
+   *  - ECOMMERCE → SOLO serie BE0# (canal digital sin caja física).
+   *  - ALMACEN   → ni caja ni serie (no opera ventas).
+   */
+  private async provisionPosResources(location: {
+    id: string;
+    name: string;
+    slug: string;
+    type: InventoryLocationType;
+  }): Promise<void> {
+    // 1) Caja principal — solo SUCURSAL física.
+    if (location.type === InventoryLocationType.SUCURSAL) {
+      const cashRegisterName = `Caja Principal ${location.name}`;
+      const existingCash = await this.prisma.pOSCashRegister.findFirst({
+        where: { inventoryLocationId: location.id, name: cashRegisterName },
+        select: { id: true },
+      });
+      if (!existingCash) {
+        await this.prisma.pOSCashRegister.create({
+          data: {
+            inventoryLocationId: location.id,
+            name: cashRegisterName,
+            active: true,
+          },
+        });
+        this.logger.log(`Caja principal creada para ${location.slug}`);
+      }
+    }
+
+    // 2) Serie de comprobantes (solo para ECOMMERCE/SUCURSAL)
+    if (location.type === InventoryLocationType.ALMACEN) return;
+
+    const series = await this.nextAvailableSeries(location.type);
+    const existingSeries = await this.prisma.receiptSeries.findFirst({
+      where: { inventoryLocationId: location.id, type: ReceiptSeriesType.BOLETA },
+      select: { id: true },
+    });
+    if (!existingSeries) {
+      await this.prisma.receiptSeries.create({
+        data: {
+          inventoryLocationId: location.id,
+          type: ReceiptSeriesType.BOLETA,
+          series,
+          nextNumber: 1,
+          active: true,
+        },
+      });
+      this.logger.log(`Serie ${series} creada para ${location.slug}`);
+    }
+  }
+
+  /**
+   * Calcula la próxima serie BOLETA disponible.
+   *  - ECOMMERCE: BE01, BE02, ...
+   *  - SUCURSAL:  B001, B002, ...
+   */
+  private async nextAvailableSeries(
+    type: InventoryLocationType,
+  ): Promise<string> {
+    if (type === InventoryLocationType.ECOMMERCE) {
+      const existing = await this.prisma.receiptSeries.findMany({
+        where: { series: { startsWith: 'BE' }, type: ReceiptSeriesType.BOLETA },
+        select: { series: true },
+      });
+      const used = new Set(existing.map((e) => e.series));
+      for (let i = 1; i < 100; i += 1) {
+        const s = `BE${i.toString().padStart(2, '0')}`;
+        if (!used.has(s)) return s;
+      }
+      throw new ConflictException('No hay series ecommerce disponibles');
+    }
+
+    // SUCURSAL
+    const existing = await this.prisma.receiptSeries.findMany({
+      where: {
+        AND: [
+          { series: { startsWith: 'B' } },
+          { NOT: { series: { startsWith: 'BE' } } },
+          { type: ReceiptSeriesType.BOLETA },
+        ],
+      },
+      select: { series: true },
+    });
+    const used = new Set(existing.map((e) => e.series));
+    for (let i = 1; i < 1000; i += 1) {
+      const s = `B${i.toString().padStart(3, '0')}`;
+      if (!used.has(s)) return s;
+    }
+    throw new ConflictException('No hay series de sucursal disponibles');
   }
 
   async update(

@@ -13,6 +13,23 @@ import { PasswordHelper } from './helpers/password.helper';
 import { TokenHelper } from './helpers/token.helper';
 import { AuthTokens } from './interfaces/authenticated-user.interface';
 
+interface UserWithRbac extends User {
+  inventoryLocation: { id: string; name: string; slug: string } | null;
+  roles: {
+    role: {
+      id: string;
+      slug: string;
+      name: string;
+      active: boolean;
+      permissions: { permission: { key: string } }[];
+    };
+  }[];
+  customPermissions: {
+    allowed: boolean;
+    permission: { key: string };
+  }[];
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -36,7 +53,7 @@ export class AuthService {
     const passwordHash = await this.passwordHelper.hash(dto.password);
 
     try {
-      const user = await this.prisma.user.create({
+      await this.prisma.user.create({
         data: {
           email: dto.email,
           password: passwordHash,
@@ -46,12 +63,13 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`User registered: ${user.id}`);
+      const enriched = await this.loadWithRbac(dto.email);
+      this.logger.log(`User registered: ${enriched.id}`);
 
-      const tokens = await this.issueAndPersistTokens(user);
+      const tokens = await this.issueAndPersistTokens(enriched);
 
       return {
-        user: this.toAuthUser(user),
+        user: this.toAuthUser(enriched),
         tokens,
       };
     } catch (error) {
@@ -66,9 +84,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+    const user = await this.loadWithRbacOrNull(dto.email);
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
@@ -83,7 +99,16 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    if (!user.active) {
+      throw new UnauthorizedException('La cuenta está desactivada');
+    }
+
     const tokens = await this.issueAndPersistTokens(user);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
 
     this.logger.log(`User logged in: ${user.id}`);
 
@@ -114,12 +139,18 @@ export class AuthService {
       throw new UnauthorizedException('Invalid token type');
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-    });
+    const user = await this.loadWithRbacByIdOrNull(payload.sub);
 
     if (!user || !user.refreshToken) {
       throw new UnauthorizedException('Refresh token is no longer valid');
+    }
+
+    if (!user.active) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: null },
+      });
+      throw new UnauthorizedException('La cuenta está desactivada');
     }
 
     const tokenMatches = await this.tokenHelper.compareRefreshToken(
@@ -165,7 +196,7 @@ export class AuthService {
   }
 
   async getProfile(userId: string): Promise<AuthUserDto> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.loadWithRbacByIdOrNull(userId);
 
     if (!user) {
       throw new UnauthorizedException('User no longer exists');
@@ -173,6 +204,8 @@ export class AuthService {
 
     return this.toAuthUser(user);
   }
+
+  // ─── Internal helpers ──────────────────────────────────────────────────
 
   private async issueAndPersistTokens(user: User): Promise<AuthTokens> {
     const tokens = await this.tokenHelper.issueTokens({
@@ -193,13 +226,93 @@ export class AuthService {
     return tokens;
   }
 
-  private toAuthUser(user: User): AuthUserDto {
+  private rbacSelect() {
+    return {
+      inventoryLocation: { select: { id: true, name: true, slug: true } },
+      roles: {
+        where: { role: { active: true } },
+        select: {
+          role: {
+            select: {
+              id: true,
+              slug: true,
+              name: true,
+              active: true,
+              permissions: {
+                select: { permission: { select: { key: true } } },
+              },
+            },
+          },
+        },
+      },
+      customPermissions: {
+        select: {
+          allowed: true,
+          permission: { select: { key: true } },
+        },
+      },
+    } satisfies Prisma.UserInclude;
+  }
+
+  private async loadWithRbac(email: string): Promise<UserWithRbac> {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      include: this.rbacSelect(),
+    });
+    if (!user) throw new UnauthorizedException('User no longer exists');
+    return user;
+  }
+
+  private loadWithRbacOrNull(email: string): Promise<UserWithRbac | null> {
+    return this.prisma.user.findUnique({
+      where: { email },
+      include: this.rbacSelect(),
+    });
+  }
+
+  private loadWithRbacByIdOrNull(id: string): Promise<UserWithRbac | null> {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: this.rbacSelect(),
+    });
+  }
+
+  private toAuthUser(user: UserWithRbac): AuthUserDto {
+    const isSuperAdmin =
+      user.role === Role.SUPER_ADMIN ||
+      user.roles.some((ur) => ur.role.slug === 'super_admin');
+
+    const perms = new Set<string>();
+    for (const ur of user.roles) {
+      for (const rp of ur.role.permissions) {
+        perms.add(rp.permission.key);
+      }
+    }
+    for (const cp of user.customPermissions) {
+      if (cp.allowed) perms.add(cp.permission.key);
+      else perms.delete(cp.permission.key);
+    }
+
     return {
       id: user.id,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
       role: user.role,
+      active: user.active,
+      location: user.inventoryLocation
+        ? {
+            id: user.inventoryLocation.id,
+            name: user.inventoryLocation.name,
+            slug: user.inventoryLocation.slug,
+          }
+        : null,
+      roles: user.roles.map((ur) => ({
+        id: ur.role.id,
+        slug: ur.role.slug,
+        name: ur.role.name,
+      })),
+      permissions: isSuperAdmin ? ['*'] : [...perms],
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };

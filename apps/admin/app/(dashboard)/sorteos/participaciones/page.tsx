@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PageHeader } from "@/shared/ui/page-header";
+import { ExportTicketsButton } from "@/features/raffle-prizes/components/export-tickets-button";
 import { useRaffleEntriesList } from "@/features/raffle-entries/hooks/use-raffle-entries";
 import { EntriesFilters } from "@/features/raffle-entries/components/entries-filters";
 import { EntriesTable } from "@/features/raffle-entries/components/entries-table";
@@ -15,7 +16,12 @@ export default function ParticipacionesPage() {
     <>
       <PageHeader
         title="Participaciones"
-        description="Audita todas las participaciones — compras directas, recompensas, referidos y bonos."
+        description="Audita todas las participaciones — compras directas, recompensas, referidos y bonos. Exporta el sorteo que vas a realizar manualmente."
+        actions={
+          query.raffleId ? (
+            <ExportTicketsButton raffleId={query.raffleId} />
+          ) : null
+        }
       />
 
       <EntriesFilters value={query} onChange={setQuery} />

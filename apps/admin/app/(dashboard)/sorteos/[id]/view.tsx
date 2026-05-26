@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeft, Loader2, Send, Trash2, Trophy } from "lucide-react";
+import { ArrowLeft, Loader2, Send, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import {
   Card,
@@ -22,21 +22,20 @@ import {
   useDeleteRaffle,
   usePublishRaffle,
 } from "@/features/raffles/hooks/use-raffle-mutations";
-import { useDrawWinner } from "@/features/raffle-entries/hooks/use-raffle-entries";
 import { RaffleForm } from "@/features/raffles/components/raffle-form";
 import {
   RaffleStatusBadge,
   RaffleVisibilityBadge,
 } from "@/features/raffles/components/raffle-status-badge";
+import { ExportTicketsButton } from "@/features/raffle-prizes/components/export-tickets-button";
+import { RafflePrizesManager } from "@/features/raffle-prizes/components/raffle-prizes-manager";
 
 export function RaffleDetailView({ id }: { id: string }) {
   const router = useRouter();
   const { data: raffle, isLoading, isError } = useRaffle(id);
   const publish = usePublishRaffle();
   const remove = useDeleteRaffle();
-  const draw = useDrawWinner();
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmDraw, setConfirmDraw] = useState(false);
 
   if (isLoading) {
     return (
@@ -82,22 +81,6 @@ export function RaffleDetailView({ id }: { id: string }) {
     }
   };
 
-  const handleDraw = async () => {
-    try {
-      const winner = await draw.mutateAsync({ raffleId: raffle.id });
-      toast.success(
-        "Ganador elegido",
-        `Ticket #${winner.ticketNumber} — ${winner.user?.firstName ?? ""} ${winner.user?.lastName ?? ""}`.trim(),
-      );
-      setConfirmDraw(false);
-    } catch (error) {
-      toast.error("No se pudo realizar el sorteo", extractErrorMessage(error));
-    }
-  };
-
-  const drawDisabled =
-    raffle.soldTickets === 0 || Boolean(raffle.winnerUserId);
-
   return (
     <>
       <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
@@ -120,13 +103,7 @@ export function RaffleDetailView({ id }: { id: string }) {
             <Button variant="outline" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="size-4" /> Eliminar
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setConfirmDraw(true)}
-              disabled={drawDisabled}
-            >
-              <Trophy className="size-4" /> Elegir ganador
-            </Button>
+            <ExportTicketsButton raffleId={raffle.id} />
             <Button
               onClick={() => void handlePublish()}
               isLoading={publish.isPending}
@@ -134,7 +111,7 @@ export function RaffleDetailView({ id }: { id: string }) {
                 raffle.status === "PUBLISHED" || raffle.status === "CANCELLED"
               }
             >
-              <Send className="size-4" /> Publicar
+              <Send className="size-4" /> Publicar sorteo
             </Button>
           </>
         }
@@ -184,18 +161,44 @@ export function RaffleDetailView({ id }: { id: string }) {
                   {formatCurrency(raffle.memberTicketPrice)}
                 </span>
               </div>
-              {raffle.winnerUserId ? (
-                <div className="flex items-center justify-between border-t border-border pt-3">
-                  <span className="text-muted-foreground">Ganador</span>
-                  <span className="font-mono text-xs">
-                    {raffle.winnerUserId.slice(0, 8)}
-                  </span>
-                </div>
-              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Flujo de sorteo</CardTitle>
+              <CardDescription>
+                El sorteo es manual: exportas los tickets, eliges el ganador
+                en una plataforma externa y registras el ticket aquí.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs text-muted-foreground">
+              <p>
+                1. <span className="text-foreground">Exportar Excel</span> con
+                tickets pagados.
+              </p>
+              <p>
+                2. Realizar el sorteo en una plataforma externa.
+              </p>
+              <p>
+                3. Volver aquí, abrir el premio y{" "}
+                <span className="text-foreground">asignar ganador</span> con el
+                número de ticket.
+              </p>
+              <p>
+                4. Subir foto/video/comunicado y{" "}
+                <span className="text-foreground">publicar oficial</span>.
+              </p>
             </CardContent>
           </Card>
         </div>
       </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <RafflePrizesManager raffleId={raffle.id} />
+        </CardContent>
+      </Card>
 
       <ConfirmDialog
         open={confirmDelete}
@@ -206,16 +209,6 @@ export function RaffleDetailView({ id }: { id: string }) {
         destructive
         isLoading={remove.isPending}
         onConfirm={() => void handleDelete()}
-      />
-
-      <ConfirmDialog
-        open={confirmDraw}
-        onOpenChange={setConfirmDraw}
-        title="¿Elegir ganador del sorteo?"
-        description="Se seleccionará al azar una participación pagada. Esta acción cerrará el sorteo y no se puede deshacer."
-        confirmLabel="Elegir ganador"
-        isLoading={draw.isPending}
-        onConfirm={() => void handleDraw()}
       />
     </>
   );

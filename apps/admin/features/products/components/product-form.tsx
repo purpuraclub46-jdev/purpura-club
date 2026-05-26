@@ -18,6 +18,7 @@ import {
 } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
 import { extractErrorMessage } from "@/services/http/client";
+import { splitGross } from "@/shared/lib/fiscal";
 import { formatCurrency } from "@/shared/lib/format";
 import { computePricing } from "@/shared/lib/pricing";
 import { toast } from "@/stores/toast.store";
@@ -167,6 +168,9 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
     { isMember: true },
   );
 
+  // Desglose fiscal en vivo del precio ingresado. El precio incluye IGV.
+  const fiscalBreakdown = splitGross(Number(price) || 0);
+
   const onSubmit = handleSubmit(async (values) => {
     try {
       if (mode === "create") {
@@ -270,10 +274,10 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
-                  label="Precio normal (PEN)"
+                  label="Precio de venta final (IGV incluido)"
                   htmlFor="price"
                   required
-                  description="Precio base público del producto."
+                  description="El sistema calcula automáticamente subtotal e IGV (18%)."
                   error={errors.price?.message}
                 >
                   <Input
@@ -281,6 +285,8 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
                     type="number"
                     step="0.01"
                     min={0}
+                    placeholder="118.00"
+                    inputMode="decimal"
                     {...register("price", { valueAsNumber: true })}
                   />
                 </FormField>
@@ -299,6 +305,13 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
                   />
                 </FormField>
               </div>
+
+              <FiscalBreakdownPanel
+                total={fiscalBreakdown.total}
+                untaxed={fiscalBreakdown.untaxed}
+                igv={fiscalBreakdown.igv}
+                igvRate={fiscalBreakdown.igvRate}
+              />
             </CardContent>
           </Card>
 
@@ -561,5 +574,99 @@ export function ProductForm({ initial, mode }: ProductFormProps) {
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Panel de desglose fiscal en vivo. Aparece debajo del input de precio para
+ * que el operador vea exactamente cómo se separa el IGV. Diseño minimal
+ * premium — accent morado de Purpura Club, sin sombras agresivas.
+ */
+function FiscalBreakdownPanel({
+  total,
+  untaxed,
+  igv,
+  igvRate,
+}: {
+  total: number;
+  untaxed: number;
+  igv: number;
+  igvRate: number;
+}) {
+  const empty = total <= 0;
+  return (
+    <div
+      aria-live="polite"
+      className="rounded-xl border border-[#9810FA]/25 bg-[#9810FA]/6 p-3.5"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9810FA]">
+          Desglose fiscal
+        </p>
+        <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#0A0A0A]/45">
+          Precios incluyen IGV · Perú
+        </span>
+      </div>
+
+      <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <FiscalCell
+          label="Precio final"
+          value={formatCurrency(total)}
+          tone="primary"
+          dimmed={empty}
+        />
+        <FiscalCell
+          label="Subtotal"
+          value={formatCurrency(untaxed)}
+          dimmed={empty}
+        />
+        <FiscalCell
+          label={`IGV (${igvRate.toFixed(0)}%)`}
+          value={formatCurrency(igv)}
+          dimmed={empty}
+        />
+      </div>
+
+      {empty ? (
+        <p className="mt-2 text-[11px] text-[#0A0A0A]/45">
+          Ingresa un precio para ver el desglose en tiempo real.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function FiscalCell({
+  label,
+  value,
+  tone,
+  dimmed,
+}: {
+  label: string;
+  value: string;
+  tone?: "primary";
+  dimmed?: boolean;
+}) {
+  return (
+    <div
+      className={
+        tone === "primary"
+          ? "rounded-lg border border-[#9810FA]/30 bg-white px-3 py-2.5"
+          : "rounded-lg border border-[#11111111] bg-white/70 px-3 py-2.5"
+      }
+    >
+      <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#0A0A0A]/55">
+        {label}
+      </p>
+      <p
+        className={
+          tone === "primary"
+            ? `mt-0.5 text-xl font-semibold tabular-nums ${dimmed ? "text-[#0A0A0A]/35" : "text-[#9810FA]"}`
+            : `mt-0.5 text-base font-semibold tabular-nums ${dimmed ? "text-[#0A0A0A]/35" : "text-[#0A0A0A]"}`
+        }
+      >
+        {value}
+      </p>
+    </div>
   );
 }

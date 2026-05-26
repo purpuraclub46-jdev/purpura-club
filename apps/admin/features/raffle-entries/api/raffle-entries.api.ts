@@ -31,14 +31,4 @@ export const raffleEntriesApi = {
     return unwrap(data);
   },
 
-  drawWinner: async (
-    raffleId: string,
-    ticketNumber?: number,
-  ): Promise<RaffleEntryEntity> => {
-    const { data } = await httpClient.post<ApiResponse<RaffleEntryEntity>>(
-      `/raffle-entries/raffles/${raffleId}/draw`,
-      ticketNumber ? { ticketNumber } : {},
-    );
-    return unwrap(data);
-  },
 };

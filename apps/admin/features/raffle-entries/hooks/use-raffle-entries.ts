@@ -25,16 +25,3 @@ export const useDecideEntry = () => {
   });
 };
 
-export const useDrawWinner = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      raffleId,
-      ticketNumber,
-    }: {
-      raffleId: string;
-      ticketNumber?: number;
-    }) => raffleEntriesApi.drawWinner(raffleId, ticketNumber),
-    onSuccess: () => qc.invalidateQueries({ queryKey: raffleEntriesKeys.all }),
-  });
-};

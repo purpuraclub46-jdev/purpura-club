@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CustomerDocumentType,
   EntryStatus,
   EntryType,
   InventoryMovementType,
@@ -12,6 +13,8 @@ import {
   OrderStatus,
   Prisma,
   RaffleStatus,
+  ReceiptSeriesType,
+  SunatStatus,
 } from '@prisma/client';
 import {
   Paginated,
@@ -19,12 +22,26 @@ import {
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { computeProductPricing } from '../../common/utils/pricing.util';
+import { validateDocument } from '../fiscal/document-validators';
+import { FiscalConfigService } from '../fiscal/fiscal-config.service';
+import {
+  computeOrderBreakdown,
+  formatReceiptNumber,
+  lineBreakdownGross,
+} from '../fiscal/fiscal.util';
 import { MembershipsService } from '../memberships/memberships.service';
 import { computePurchaseEntries } from '../memberships/membership.helpers';
+import { ReceiptsService } from '../receipts/receipts.service';
 import { ReferralsService } from '../referrals/referrals.service';
-import { CreateOrderDto } from './dto/create-order.dto';
+import {
+  CreateOrderDto,
+  OrderCustomerFiscalDto,
+} from './dto/create-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import {
+  OrderFiscalSnapshotDto,
+  OrderFiscalTotalsDto,
+  OrderReceiptDto,
   OrderResponseDto,
 } from './dto/order-response.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -43,6 +60,8 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
     private readonly referrals: ReferralsService,
+    private readonly receipts: ReceiptsService,
+    private readonly fiscalConfig: FiscalConfigService,
   ) {}
 
   async create(dto: CreateOrderDto): Promise<OrderResponseDto> {
@@ -84,11 +103,36 @@ export class OrdersService {
       throw new NotFoundException('Uno o más productos no existen');
     }
 
+    // Carga el customer fiscal si está enlazado (opcional).
+    const customer = dto.customerId
+      ? await this.prisma.customer.findUnique({
+          where: { id: dto.customerId },
+          select: {
+            id: true,
+            userId: true,
+            fullName: true,
+            dni: true,
+            ruc: true,
+            documentType: true,
+            legalName: true,
+            fiscalAddress: true,
+            email: true,
+          },
+        })
+      : null;
+    if (dto.customerId && !customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
     // El precio del miembro solo aplica si el comprador es miembro Y la oferta
     // está vigente. Si el pedido es anónimo (sin userId), nunca es miembro.
-    const isMember = dto.userId
-      ? await this.memberships.isActive(dto.userId)
+    const effectiveUserId = dto.userId ?? customer?.userId ?? null;
+    const isMember = effectiveUserId
+      ? await this.memberships.isActive(effectiveUserId)
       : false;
+
+    const igvRate = this.fiscalConfig.effectiveIgvRate();
+    const pricesIncludeIgv = this.fiscalConfig.pricesIncludeIgv;
 
     const productById = new Map(products.map((p) => [p.id, p]));
 
@@ -112,18 +156,25 @@ export class OrdersService {
         { isMember },
       );
 
-      const unitPrice =
-        item.unitPrice !== undefined
-          ? new Prisma.Decimal(item.unitPrice)
-          : new Prisma.Decimal(pricing.finalPrice);
-      const lineSubtotal = unitPrice.mul(item.quantity);
+      const unitPriceNum =
+        item.unitPrice !== undefined ? item.unitPrice : pricing.finalPrice;
+      const breakdown = lineBreakdownGross({
+        unitPrice: unitPriceNum,
+        quantity: item.quantity,
+        igvRate,
+      });
+      const lineSubtotal = new Prisma.Decimal(breakdown.subtotal);
       subtotal = subtotal.add(lineSubtotal);
 
       return {
         productId: item.productId,
         quantity: item.quantity,
-        unitPrice,
+        unitPrice: new Prisma.Decimal(breakdown.unitPrice),
         subtotal: lineSubtotal,
+        igvRate: new Prisma.Decimal(breakdown.igvRate),
+        unitPriceUntaxed: new Prisma.Decimal(breakdown.unitPriceUntaxed),
+        subtotalUntaxed: new Prisma.Decimal(breakdown.subtotalUntaxed),
+        igvAmount: new Prisma.Decimal(breakdown.igvAmount),
       };
     });
 
@@ -135,13 +186,57 @@ export class OrdersService {
     }
     const total = subtotal.sub(discount);
 
+    // Desglose IGV sobre el total final.
+    const fiscalTotals = computeOrderBreakdown({
+      grossTotal: total.toNumber(),
+      igvRate,
+    });
+
+    // Snapshot fiscal del cliente y validación según receiptType.
+    const receiptType = dto.receiptType ?? ReceiptSeriesType.BOLETA;
+    const fiscalSnapshot = this.resolveFiscalSnapshot({
+      receiptType,
+      dtoFiscal: dto.customerFiscal,
+      customer,
+    });
+
     const number = await this.allocateOrderNumber();
+
+    // Emisión opcional inmediata del comprobante (cuando el flujo lo requiera).
+    // Por defecto las órdenes ecommerce se emiten al cambiar a PAID; este flag
+    // permite forzar emisión en creación (e.g., pagos sincrónicos).
+    let receiptData: {
+      receiptType: ReceiptSeriesType;
+      receiptSeries: string;
+      receiptNumber: number;
+      receiptIssuedAt: Date;
+    } | null = null;
+    if (dto.issueReceipt) {
+      try {
+        const issued = await this.receipts.issue({
+          inventoryLocationId: dto.inventoryLocationId ?? null,
+          type: receiptType,
+        });
+        receiptData = {
+          receiptType: issued.type,
+          receiptSeries: issued.series,
+          receiptNumber: issued.number,
+          receiptIssuedAt: new Date(),
+        };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Orden ${number}: no se pudo emitir ${receiptType}: ${msg}`,
+        );
+      }
+    }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           number,
-          userId: dto.userId,
+          userId: effectiveUserId,
+          customerId: customer?.id ?? null,
           inventoryLocationId: dto.inventoryLocationId,
           subtotal,
           discount,
@@ -149,6 +244,21 @@ export class OrdersService {
           paymentMethod: dto.paymentMethod,
           status: OrderStatus.PENDING,
           notes: dto.notes,
+          // ── Fiscal ──
+          pricesIncludeIgv,
+          igvRate: new Prisma.Decimal(igvRate),
+          subtotalUntaxed: new Prisma.Decimal(fiscalTotals.subtotalUntaxed),
+          igvAmount: new Prisma.Decimal(fiscalTotals.igvAmount),
+          customerDocumentType: fiscalSnapshot.documentType,
+          customerDocumentNumber: fiscalSnapshot.documentNumber,
+          customerLegalName: fiscalSnapshot.legalName,
+          customerFiscalAddress: fiscalSnapshot.fiscalAddress,
+          customerEmail: fiscalSnapshot.email,
+          receiptType: receiptData?.receiptType,
+          receiptSeries: receiptData?.receiptSeries,
+          receiptNumber: receiptData?.receiptNumber,
+          receiptIssuedAt: receiptData?.receiptIssuedAt,
+          sunatStatus: SunatStatus.PENDING,
           items: {
             create: items,
           },
@@ -161,6 +271,71 @@ export class OrdersService {
 
     this.logger.log(`Order created ${created.id} (${created.number})`);
     return this.toResponse(created);
+  }
+
+  private resolveFiscalSnapshot(opts: {
+    receiptType: ReceiptSeriesType;
+    dtoFiscal: OrderCustomerFiscalDto | undefined;
+    customer: {
+      fullName: string;
+      dni: string | null;
+      ruc: string | null;
+      documentType: CustomerDocumentType;
+      legalName: string | null;
+      fiscalAddress: string | null;
+      email: string | null;
+    } | null;
+  }): {
+    documentType: CustomerDocumentType | null;
+    documentNumber: string | null;
+    legalName: string | null;
+    fiscalAddress: string | null;
+    email: string | null;
+  } {
+    const { receiptType, dtoFiscal, customer } = opts;
+
+    const documentType =
+      dtoFiscal?.documentType ?? customer?.documentType ?? null;
+    const documentNumber =
+      dtoFiscal?.documentNumber ??
+      (documentType === CustomerDocumentType.RUC
+        ? customer?.ruc ?? null
+        : customer?.dni ?? null);
+    const legalName =
+      dtoFiscal?.legalName ?? customer?.legalName ?? customer?.fullName ?? null;
+    const fiscalAddress =
+      dtoFiscal?.fiscalAddress ?? customer?.fiscalAddress ?? null;
+    const email = dtoFiscal?.email ?? customer?.email ?? null;
+
+    if (receiptType === ReceiptSeriesType.FACTURA) {
+      if (documentType !== CustomerDocumentType.RUC) {
+        throw new BadRequestException(
+          'Para emitir FACTURA, el cliente debe tener documentType=RUC',
+        );
+      }
+      if (!documentNumber) {
+        throw new BadRequestException(
+          'Para emitir FACTURA, el RUC del cliente es obligatorio',
+        );
+      }
+      const rucError = validateDocument(CustomerDocumentType.RUC, documentNumber);
+      if (rucError) throw new BadRequestException(rucError);
+      if (!legalName) {
+        throw new BadRequestException(
+          'Para emitir FACTURA, la razón social del cliente es obligatoria',
+        );
+      }
+      if (!fiscalAddress) {
+        throw new BadRequestException(
+          'Para emitir FACTURA, la dirección fiscal del cliente es obligatoria',
+        );
+      }
+    } else if (documentNumber && documentType) {
+      const err = validateDocument(documentType, documentNumber);
+      if (err) throw new BadRequestException(err);
+    }
+
+    return { documentType, documentNumber, legalName, fiscalAddress, email };
   }
 
   async updateStatus(
@@ -473,6 +648,38 @@ export class OrdersService {
   }
 
   private toResponse(order: OrderWithRelations): OrderResponseDto {
+    const fiscal: OrderFiscalTotalsDto = {
+      igvRate: this.decimalToNumber(order.igvRate),
+      subtotalUntaxed: this.decimalToNumber(order.subtotalUntaxed),
+      igvAmount: this.decimalToNumber(order.igvAmount),
+      total: this.decimalToNumber(order.total),
+      pricesIncludeIgv: order.pricesIncludeIgv,
+    };
+
+    const fiscalSnapshot: OrderFiscalSnapshotDto = {
+      documentType: order.customerDocumentType,
+      documentNumber: order.customerDocumentNumber,
+      legalName: order.customerLegalName,
+      fiscalAddress: order.customerFiscalAddress,
+      email: order.customerEmail,
+    };
+
+    const receipt: OrderReceiptDto | null =
+      order.receiptType &&
+      order.receiptSeries &&
+      order.receiptNumber !== null
+        ? {
+            type: order.receiptType,
+            series: order.receiptSeries,
+            number: order.receiptNumber,
+            formatted:
+              formatReceiptNumber(order.receiptSeries, order.receiptNumber) ??
+              '',
+            issuedAt: (order.receiptIssuedAt ?? order.createdAt).toISOString(),
+            sunatStatus: order.sunatStatus,
+          }
+        : null;
+
     return {
       id: order.id,
       number: order.number,
@@ -493,6 +700,9 @@ export class OrdersService {
       subtotal: this.decimalToNumber(order.subtotal),
       discount: this.decimalToNumber(order.discount),
       total: this.decimalToNumber(order.total),
+      fiscal,
+      fiscalSnapshot,
+      receipt,
       paymentMethod: order.paymentMethod,
       status: order.status,
       notes: order.notes,
@@ -504,6 +714,10 @@ export class OrdersService {
         quantity: item.quantity,
         unitPrice: this.decimalToNumber(item.unitPrice),
         subtotal: this.decimalToNumber(item.subtotal),
+        igvRate: this.decimalToNumber(item.igvRate),
+        unitPriceUntaxed: this.decimalToNumber(item.unitPriceUntaxed),
+        subtotalUntaxed: this.decimalToNumber(item.subtotalUntaxed),
+        igvAmount: this.decimalToNumber(item.igvAmount),
       })),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,

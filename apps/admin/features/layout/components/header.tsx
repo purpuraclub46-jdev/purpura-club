@@ -2,7 +2,6 @@
 
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { Button } from "@/shared/ui/button";
 import { useUiStore } from "@/stores/ui.store";
 import { isNavGroup, navSections } from "../nav.config";
 import { UserMenu } from "./user-menu";
@@ -30,22 +29,21 @@ export function Header() {
   const setMobileSidebarOpen = useUiStore((s) => s.setMobileSidebarOpen);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-border bg-background/70 px-4 backdrop-blur-md md:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-[#11111111] bg-white/85 px-4 backdrop-blur-md md:px-6">
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
+        <button
+          type="button"
+          className="md:hidden rounded-md p-2 text-[#0A0A0A]/65 transition-colors hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]"
           onClick={() => setMobileSidebarOpen(true)}
           aria-label="Abrir menú"
         >
           <Menu className="size-5" />
-        </Button>
+        </button>
         <div className="flex flex-col leading-tight">
-          <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-[#0A0A0A]/45">
             Purpura Club
           </span>
-          <h2 className="text-base font-semibold text-foreground">
+          <h2 className="text-base font-semibold text-[#0A0A0A]">
             {findPageTitle(pathname)}
           </h2>
         </div>

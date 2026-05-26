@@ -1,17 +1,18 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronsLeft } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
-import { LogoMark } from "@/shared/components/brand/logo";
 import { useAuth } from "@/features/auth/hooks/use-auth";
+import { userHasAnyPermission } from "@/stores/auth.store";
 import { useUiStore } from "@/stores/ui.store";
 import {
   isNavGroup,
   navSections,
+  type NavEntry,
   type NavGroup,
   type NavItem,
 } from "../nav.config";
@@ -29,21 +30,28 @@ function SidebarLink({ item, active, collapsed, nested }: SidebarLinkProps) {
     <Link
       href={item.href}
       className={cn(
-        "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150",
         active
-          ? "bg-primary/15 text-foreground"
-          : "text-muted-foreground hover:bg-surface-strong hover:text-foreground",
+          ? "bg-[#9810FA]/8 text-[#0A0A0A]"
+          : "text-[#0A0A0A]/65 hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]",
         collapsed && "justify-center px-2",
         nested && !collapsed && "pl-9",
       )}
       title={collapsed ? item.label : undefined}
     >
+      {active && !nested ? (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-y-1.5 w-[3px] rounded-full bg-[#9810FA]",
+            collapsed ? "left-0.5" : "left-0",
+          )}
+        />
+      ) : null}
       <Icon
         className={cn(
           "size-4 shrink-0 transition-colors",
-          active
-            ? "text-primary"
-            : "text-muted-foreground group-hover:text-foreground",
+          active ? "text-[#9810FA]" : "text-[#0A0A0A]/55 group-hover:text-[#9810FA]",
         )}
       />
       {!collapsed ? <span className="truncate">{item.label}</span> : null}
@@ -93,21 +101,21 @@ function SidebarGroup({ group, collapsed, pathname }: SidebarGroupProps) {
         className={cn(
           "group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
           hasActive
-            ? "text-foreground"
-            : "text-muted-foreground hover:bg-surface-strong hover:text-foreground",
+            ? "text-[#0A0A0A]"
+            : "text-[#0A0A0A]/65 hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]",
         )}
         aria-expanded={open}
       >
         <Icon
           className={cn(
             "size-4 shrink-0 transition-colors",
-            hasActive ? "text-primary" : "text-muted-foreground",
+            hasActive ? "text-[#9810FA]" : "text-[#0A0A0A]/55",
           )}
         />
-        <span className="flex-1 text-left truncate">{group.label}</span>
+        <span className="flex-1 truncate text-left">{group.label}</span>
         <ChevronDown
           className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
+            "size-3.5 shrink-0 text-[#0A0A0A]/40 transition-transform",
             open && "rotate-180",
           )}
         />
@@ -145,43 +153,74 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "hidden h-screen sticky top-0 shrink-0 border-r border-border bg-surface/40 backdrop-blur-md transition-[width] duration-200 md:flex md:flex-col",
-        collapsed ? "w-17" : "w-64",
+        "sticky top-0 hidden h-screen shrink-0 border-r border-[#11111111] bg-white transition-[width] duration-200 md:flex md:flex-col",
+        collapsed ? "w-[68px]" : "w-64",
       )}
     >
+      {/* ─── Brand header ─── */}
       <div
         className={cn(
-          "flex h-16 items-center gap-2.5 border-b border-border px-4",
-          collapsed && "justify-center px-2",
+          "flex h-16 items-center border-b border-[#11111111] px-4",
+          collapsed ? "justify-center px-2" : "gap-2",
         )}
       >
-        <LogoMark size={36} className="brand-glow rounded-lg" />
-        {!collapsed ? (
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold tracking-tight">
-              Purpura Club
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Admin
-            </span>
-          </div>
-        ) : null}
+        <Link
+          href="/"
+          aria-label="Purpura Club admin"
+          className="flex items-center"
+        >
+          {collapsed ? (
+            <Image
+              src="/images/isotipo.svg"
+              alt=""
+              width={28}
+              height={28}
+              priority
+              className="size-7"
+            />
+          ) : (
+            <Image
+              src="/images/logotipo.svg"
+              alt="Purpura Club"
+              width={160}
+              height={32}
+              priority
+              className="h-7 w-auto"
+            />
+          )}
+        </Link>
       </div>
 
+      {/* ─── Nav ─── */}
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
         {navSections.map((section) => {
-          const visible = section.entries.filter((entry) =>
-            isNavGroup(entry)
-              ? !entry.roles ||
-                (user ? entry.roles.includes(user.role) : false)
-              : !entry.roles ||
-                (user ? entry.roles.includes(user.role) : false),
-          );
+          const filterEntry = (entry: NavEntry): boolean => {
+            if (entry.roles && (!user || !entry.roles.includes(user.role))) {
+              return false;
+            }
+            if (entry.anyPermission && entry.anyPermission.length > 0) {
+              if (!userHasAnyPermission(user, entry.anyPermission)) return false;
+            }
+            return true;
+          };
+
+          const visible = section.entries
+            .map((entry) => {
+              if (!filterEntry(entry)) return null;
+              if (isNavGroup(entry)) {
+                const items = entry.items.filter(filterEntry);
+                if (items.length === 0) return null;
+                return { ...entry, items } as NavGroup;
+              }
+              return entry;
+            })
+            .filter((e): e is NavEntry => e !== null);
+
           if (visible.length === 0) return null;
           return (
             <div key={section.title} className="space-y-1">
               {!collapsed ? (
-                <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground/70">
+                <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/40">
                   {section.title}
                 </p>
               ) : null}
@@ -207,22 +246,25 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-border p-3">
-        <Button
-          variant="ghost"
-          size="sm"
+      {/* ─── Collapse toggle ─── */}
+      <div className="border-t border-[#11111111] p-3">
+        <button
+          type="button"
           onClick={toggleSidebar}
-          className={cn("w-full", collapsed && "px-0")}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[#0A0A0A]/55 transition-colors hover:bg-[#9810FA]/5 hover:text-[#0A0A0A]",
+            collapsed && "justify-center px-0",
+          )}
           aria-label={collapsed ? "Expandir barra lateral" : "Contraer barra lateral"}
         >
           <ChevronsLeft
             className={cn(
-              "size-4 transition-transform",
+              "size-4 shrink-0 transition-transform",
               collapsed && "rotate-180",
             )}
           />
           {!collapsed ? <span>Contraer</span> : null}
-        </Button>
+        </button>
       </div>
     </aside>
   );

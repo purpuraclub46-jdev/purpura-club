@@ -31,7 +31,6 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
   DecideEntryDto,
-  DrawWinnerDto,
   EntryQueryDto,
   GrantEntryDto,
   PurchaseEntryDto,
@@ -133,22 +132,5 @@ export class RaffleEntriesController {
     return this.entriesService.decide(id, dto);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post('raffles/:raffleId/draw')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Draw a winner for a raffle',
-    description:
-      'Picks a random PAID entry — or the explicitly provided ticket number — and marks it as WINNER.',
-  })
-  @ApiOkResponse({ type: RaffleEntryResponseDto })
-  @ApiBadRequestResponse()
-  @ApiConflictResponse({ description: 'Raffle already has a winner' })
-  @ApiNotFoundResponse()
-  drawWinner(
-    @Param('raffleId', ParseUUIDPipe) raffleId: string,
-    @Body() dto: DrawWinnerDto,
-  ) {
-    return this.entriesService.drawWinner(raffleId, dto.ticketNumber);
-  }
 }
+

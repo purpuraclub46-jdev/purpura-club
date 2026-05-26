@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
+import { Role as AccessLevel } from '@prisma/client';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AUTH_CONFIG_KEY, AuthConfig } from '../../../config/auth.config';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -38,17 +39,63 @@ export class JwtStrategy extends PassportStrategy(Strategy, JWT_STRATEGY_NAME) {
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        active: true,
+        inventoryLocationId: true,
+        roles: {
+          where: { role: { active: true } },
+          select: {
+            role: {
+              select: {
+                slug: true,
+                permissions: {
+                  select: { permission: { select: { key: true } } },
+                },
+              },
+            },
+          },
+        },
+        customPermissions: {
+          select: { allowed: true, permission: { select: { key: true } } },
+        },
+      },
     });
 
     if (!user) {
       throw new UnauthorizedException('User no longer exists');
     }
 
+    if (!user.active) {
+      throw new UnauthorizedException('La cuenta está desactivada');
+    }
+
+    const roleSlugs = user.roles.map((ur) => ur.role.slug);
+    const permKeys = new Set<string>();
+    for (const ur of user.roles) {
+      for (const rp of ur.role.permissions) {
+        permKeys.add(rp.permission.key);
+      }
+    }
+    for (const cp of user.customPermissions) {
+      if (cp.allowed) permKeys.add(cp.permission.key);
+      else permKeys.delete(cp.permission.key);
+    }
+
+    // SUPER_ADMIN tiene acceso total — la guarda de permisos lo trata aparte
+    // y aquí no se necesita cargar todo el catálogo.
+    const isSuperAdmin =
+      user.role === AccessLevel.SUPER_ADMIN || roleSlugs.includes('super_admin');
+
     return {
       id: user.id,
       email: user.email,
       role: user.role,
+      inventoryLocationId: user.inventoryLocationId,
+      roleSlugs,
+      permissions: isSuperAdmin ? ['*'] : [...permKeys],
     };
   }
 }

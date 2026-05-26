@@ -26,7 +26,14 @@
       "PowerShell(Get-Process node)",
       "Bash(node -e 'const{PrismaClient}=require\\('\\\\''@prisma/client'\\\\''\\);const p=new PrismaClient\\(\\);\\(async\\(\\)=>{const[branches,cats,prods,inv,mov]=await Promise.all\\([p.branch.count\\(\\),p.category.count\\(\\),p.product.count\\(\\),p.branchInventory.count\\(\\),p.inventoryMovement.count\\(\\)]\\);const featured=await p.product.count\\({where:{featured:true}}\\);const roots=await p.category.count\\({where:{parentId:null}}\\);console.log\\('\\\\''Branches:'\\\\'',branches\\);console.log\\('\\\\''Categories:'\\\\'',cats,'\\\\''\\(roots:'\\\\'',roots+'\\\\''\\)'\\\\''\\);console.log\\('\\\\''Products:'\\\\'',prods,'\\\\''\\(featured:'\\\\'',featured+'\\\\''\\)'\\\\''\\);console.log\\('\\\\''Inventory rows:'\\\\'',inv\\);console.log\\('\\\\''Movements:'\\\\'',mov\\);await p.$disconnect\\(\\);}\\)\\(\\);')",
       "PowerShell($ports = Get-NetTCPConnection -LocalPort 3000,3001 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if \\($ports\\) { $ports | ForEach-Object { try { $p = Get-Process -Id $_ -ErrorAction Stop; \"$\\($p.Id\\) $\\($p.ProcessName\\)\" } catch {} } } else { \"no listeners on 3000/3001\" })",
-      "Bash(echo \"admin-build:$?\")"
+      "Bash(echo \"admin-build:$?\")",
+      "Bash(curl -s -X POST http://localhost:3000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@purpura.club\",\"password\":\"Purpura1234!\"}')",
+      "PowerShell(Get-Process -Name node -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)",
+      "PowerShell(\"ok\")",
+      "PowerShell(Get-Process -Id 6588, 11068, 17812, 21440, 27228 -ErrorAction SilentlyContinue)",
+      "Bash(curl -s -X POST http://127.0.0.1:3000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"superadmin@purpura.club\",\"password\":\"SuperAdmin123!\"}')",
+      "Bash(grep -v \"0$\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\louis\\Desktop\\purpura-club\\apps\\api\\src\\common"

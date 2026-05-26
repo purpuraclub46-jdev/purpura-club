@@ -1,8 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  CustomerDocumentType,
   InventoryLocationType,
   OrderPaymentMethod,
   OrderStatus,
+  ReceiptSeriesType,
+  SunatStatus,
 } from '@prisma/client';
 
 export class OrderItemResponseDto {
@@ -26,6 +29,16 @@ export class OrderItemResponseDto {
 
   @ApiProperty()
   subtotal!: number;
+
+  // IGV breakdown por línea
+  @ApiProperty({ type: Number })
+  igvRate!: number;
+  @ApiProperty({ type: Number })
+  unitPriceUntaxed!: number;
+  @ApiProperty({ type: Number })
+  subtotalUntaxed!: number;
+  @ApiProperty({ type: Number })
+  igvAmount!: number;
 }
 
 export class OrderCustomerRefDto {
@@ -53,6 +66,54 @@ export class OrderLocationRefDto {
   type!: InventoryLocationType;
 }
 
+/** Desglose IGV total de la orden. */
+export class OrderFiscalTotalsDto {
+  @ApiProperty({ type: Number })
+  igvRate!: number;
+  @ApiProperty({ type: Number })
+  subtotalUntaxed!: number;
+  @ApiProperty({ type: Number })
+  igvAmount!: number;
+  @ApiProperty({ type: Number })
+  total!: number;
+  @ApiProperty()
+  pricesIncludeIgv!: boolean;
+}
+
+/** Snapshot fiscal del cliente al momento de la emisión. */
+export class OrderFiscalSnapshotDto {
+  @ApiPropertyOptional({
+    enum: CustomerDocumentType,
+    enumName: 'CustomerDocumentType',
+    nullable: true,
+  })
+  documentType!: CustomerDocumentType | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  documentNumber!: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  legalName!: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  fiscalAddress!: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true })
+  email!: string | null;
+}
+
+/** Resumen del comprobante emitido. */
+export class OrderReceiptDto {
+  @ApiProperty({ enum: ReceiptSeriesType, enumName: 'ReceiptSeriesType' })
+  type!: ReceiptSeriesType;
+  @ApiProperty()
+  series!: string;
+  @ApiProperty()
+  number!: number;
+  @ApiProperty()
+  formatted!: string;
+  @ApiProperty({ type: String, format: 'date-time' })
+  issuedAt!: string;
+  @ApiProperty({ enum: SunatStatus, enumName: 'SunatStatus' })
+  sunatStatus!: SunatStatus;
+}
+
 export class OrderResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -74,6 +135,15 @@ export class OrderResponseDto {
 
   @ApiProperty()
   total!: number;
+
+  @ApiProperty({ type: OrderFiscalTotalsDto })
+  fiscal!: OrderFiscalTotalsDto;
+
+  @ApiProperty({ type: OrderFiscalSnapshotDto })
+  fiscalSnapshot!: OrderFiscalSnapshotDto;
+
+  @ApiPropertyOptional({ type: OrderReceiptDto, nullable: true })
+  receipt!: OrderReceiptDto | null;
 
   @ApiProperty({ enum: OrderPaymentMethod, enumName: 'OrderPaymentMethod' })
   paymentMethod!: OrderPaymentMethod;

@@ -306,63 +306,6 @@ export class RaffleEntriesService {
     return this.toResponse(refreshed);
   }
 
-  async drawWinner(
-    raffleId: string,
-    ticketNumber?: number,
-  ): Promise<RaffleEntryResponseDto> {
-    const raffle = await this.prisma.raffle.findUnique({
-      where: { id: raffleId },
-    });
-    if (!raffle) {
-      throw new NotFoundException('Raffle not found');
-    }
-    if (raffle.winnerUserId) {
-      throw new ConflictException('This raffle already has a winner');
-    }
-
-    let entry: { id: string; userId: string } | null = null;
-
-    if (typeof ticketNumber === 'number') {
-      const candidate = await this.entriesRepository.findByTicketNumber(
-        raffleId,
-        ticketNumber,
-      );
-      if (!candidate || candidate.status !== EntryStatus.PAID) {
-        throw new BadRequestException(
-          'Selected ticket number is not a valid paid entry',
-        );
-      }
-      entry = { id: candidate.id, userId: candidate.userId };
-    } else {
-      const random = await this.entriesRepository.findRandomPaid(raffleId);
-      if (!random) {
-        throw new BadRequestException('No paid entries available to draw');
-      }
-      entry = { id: random.id, userId: random.userId };
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.raffleEntry.update({
-        where: { id: entry.id },
-        data: { status: EntryStatus.WINNER },
-      }),
-      this.prisma.raffle.update({
-        where: { id: raffleId },
-        data: { winnerUserId: entry.userId, status: RaffleStatus.CLOSED },
-      }),
-    ]);
-
-    const refreshed = await this.entriesRepository.findById(entry.id);
-    if (!refreshed) {
-      throw new NotFoundException('Winner entry not found after draw');
-    }
-
-    this.logger.log(
-      `Winner drawn for raffle ${raffleId}: entry=${entry.id} user=${entry.userId}`,
-    );
-    return this.toResponse(refreshed);
-  }
-
   private async listAndMap(
     where: Prisma.RaffleEntryWhereInput,
     page: number,
