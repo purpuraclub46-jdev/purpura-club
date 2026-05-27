@@ -82,6 +82,18 @@ export class ProductQueryDto {
   @IsBoolean()
   featured?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'Filtrar solo productos con oferta vigente (discountActive=true, ' +
+      'discountPercentage>0 y dentro de la ventana de fechas, si está definida).',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value === 'true' : Boolean(value),
+  )
+  @IsBoolean()
+  discounted?: boolean;
+
   @ApiPropertyOptional({ enum: PRODUCT_SORTS, default: 'createdAt:desc' })
   @IsOptional()
   @IsIn(PRODUCT_SORTS)

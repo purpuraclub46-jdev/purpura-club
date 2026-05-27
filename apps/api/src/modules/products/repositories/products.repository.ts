@@ -105,6 +105,21 @@ export class ProductsRepository {
     return { items, total };
   }
 
+  /**
+   * Hidrata un set de IDs con todas las relaciones (imágenes, categorías,
+   * disponibilidad, stock). Se usa cuando otro camino — p.ej. una query SQL
+   * con `ORDER BY random()` — ya determinó qué IDs traer y el orden.
+   * El resultado NO preserva el orden de `ids` (Postgres pierde el orden
+   * dentro de un `IN`); el caller debe re-ordenar client-side.
+   */
+  findManyByIds(ids: string[]): Promise<ProductWithRelations[]> {
+    if (ids.length === 0) return Promise.resolve([]);
+    return this.prisma.product.findMany({
+      where: { id: { in: ids } },
+      include: productInclude,
+    });
+  }
+
   async createWithRelations(args: {
     data: Prisma.ProductCreateInput;
     categoryIds: string[];

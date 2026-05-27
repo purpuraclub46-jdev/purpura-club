@@ -35,6 +35,16 @@ interface NormalizedAvailability {
 
 interface ToResponseOptions {
   isMember?: boolean;
+  /**
+   * Restringe el cómputo de stock agregado (`inventory.totalStock` /
+   * `inventory.totalReserved`) y la lista `availability` a ubicaciones
+   * del canal indicado. Se usa en los endpoints públicos del storefront
+   * para que NO se cuente stock de SUCURSAL/ALMACEN.
+   *
+   * Cuando se omite se mantiene el comportamiento histórico (todas las
+   * ubicaciones), preservando admin/POS sin cambios.
+   */
+  stockChannelType?: 'ECOMMERCE' | 'SUCURSAL' | 'ALMACEN';
 }
 
 @Injectable()
@@ -249,12 +259,25 @@ export class ProductsService {
     if (!hasEcommerceAvailability) {
       throw new NotFoundException('Producto no disponible');
     }
-    return this.toResponse(product, options);
+    return this.toResponse(product, {
+      ...options,
+      stockChannelType: options.stockChannelType ?? 'ECOMMERCE',
+    });
   }
 
   async findMany(
     query: ProductQueryDto & {
       availableForType?: 'ECOMMERCE' | 'SUCURSAL' | 'ALMACEN';
+      /**
+       * Cuando es `true` y se pasa `categoryId`, el filtro incluye los
+       * productos taggeados al `categoryId` Y a cualquier categoría
+       * descendiente (toda la rama). Lo usa el catálogo público para que
+       * filtrar por una categoría raíz (ej. "Joyería") muestre los productos
+       * de sus subcategorías ("Anillos", "Anillos > Plata 925").
+       *
+       * Default `false` para preservar el comportamiento estricto del admin.
+       */
+      expandCategoryDescendants?: boolean;
     },
     options: ToResponseOptions = {},
   ): Promise<Paginated<ProductResponseDto>> {
@@ -263,8 +286,31 @@ export class ProductsService {
     if (typeof query.active === 'boolean') where.active = query.active;
     if (typeof query.featured === 'boolean') where.featured = query.featured;
 
+    if (query.discounted === true) {
+      // Solo productos con oferta vigente — mismo criterio que
+      // `computeProductPricing.hasActive`:
+      //   · discountActive = true
+      //   · discountPercentage > 0
+      //   · dentro de la ventana de fechas (si está definida).
+      const now = new Date();
+      where.discountActive = true;
+      where.discountPercentage = { gt: new Prisma.Decimal(0) };
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [{ discountStartsAt: null }, { discountStartsAt: { lte: now } }],
+        },
+        {
+          OR: [{ discountEndsAt: null }, { discountEndsAt: { gte: now } }],
+        },
+      ];
+    }
+
     if (query.categoryId) {
-      where.categories = { some: { categoryId: query.categoryId } };
+      const ids = query.expandCategoryDescendants
+        ? await this.collectCategoryDescendants(query.categoryId)
+        : [query.categoryId];
+      where.categories = { some: { categoryId: { in: ids } } };
     }
 
     if (query.inventoryLocationId) {
@@ -283,12 +329,53 @@ export class ProductsService {
       };
     }
 
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { sku: { contains: query.search, mode: 'insensitive' } },
-        { slug: { contains: query.search, mode: 'insensitive' } },
-      ];
+    // Búsqueda inteligente: cuando hay `search`, resolvemos primero los IDs
+    // ranqueados por trigram + unaccent y luego paginamos sobre ese set.
+    // Preserva el orden de relevancia ignorando el sort solicitado (la
+    // intuición de búsqueda — "lo más parecido primero" — vale más que el
+    // sort en este caso).
+    if (query.search && query.search.length >= 2) {
+      const channelType = query.availableForType;
+      const rankedIds = await this.findIdsBySearch(query.search, {
+        activeOnly: query.active === true,
+        channelType,
+        limit: 200,
+      });
+
+      if (rankedIds.length === 0) {
+        return {
+          items: [],
+          meta: buildPaginationMeta(0, query.page, query.limit),
+        };
+      }
+
+      // Aplicamos paginación in-memory sobre la lista ranqueada.
+      const offset = (query.page - 1) * query.limit;
+      const pageIds = rankedIds.slice(offset, offset + query.limit);
+      const total = rankedIds.length;
+
+      // Recompilamos el where con id-IN preservando los demás filtros
+      // (category, availability, etc) — Postgres intersecta ambos sets.
+      where.id = { in: pageIds };
+
+      const { items } = await this.repository.findMany({
+        where,
+        orderBy: this.toOrderBy(query.sort),
+        page: 1,
+        limit: query.limit,
+      });
+
+      // Reordenamos según el ranking trigram (Postgres pierde el orden
+      // dentro de un IN, así que ordenamos client-side).
+      const rankIndex = new Map(pageIds.map((id, i) => [id, i]));
+      const sortedItems = [...items].sort(
+        (a, b) => (rankIndex.get(a.id) ?? 0) - (rankIndex.get(b.id) ?? 0),
+      );
+
+      return {
+        items: sortedItems.map((p) => this.toResponse(p, options)),
+        meta: buildPaginationMeta(total, query.page, query.limit),
+      };
     }
 
     const { items, total } = await this.repository.findMany({
@@ -304,11 +391,272 @@ export class ProductsService {
     };
   }
 
+  /**
+   * Selección aleatoria de productos disponibles en el canal ECOMMERCE.
+   * Pensada para el "showcase curado" del home — cada request devuelve un
+   * subset distinto. `RANDOM()` de Postgres distribuye uniformemente entre
+   * todas las categorías, así que con N suficientemente grande (>= 10) la
+   * mezcla entre joyas y perfumes es natural.
+   *
+   * El `EXISTS` garantiza que el producto está marcado como activo en una
+   * `InventoryLocation` ECOMMERCE también activa — la misma regla que aplica
+   * `findMany` para el catálogo público.
+   */
+  async findRandomForHome(
+    limit: number,
+    options: ToResponseOptions = {},
+  ): Promise<ProductResponseDto[]> {
+    const cappedLimit = Math.max(1, Math.min(30, limit));
+
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT p.id
+      FROM products p
+      WHERE p.active = true
+        AND EXISTS (
+          SELECT 1
+          FROM product_availability pa
+          INNER JOIN inventory_locations l
+            ON l.id = pa."inventoryLocationId"
+          WHERE pa."productId" = p.id
+            AND pa.active = true
+            AND l.active = true
+            AND l.type = 'ECOMMERCE'
+        )
+      ORDER BY random()
+      LIMIT ${cappedLimit}
+    `;
+
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((r) => r.id);
+    const products = await this.repository.findManyByIds(ids);
+
+    // Postgres pierde el orden del set dentro de `IN`. Re-ordenamos según
+    // el ranking aleatorio original para que la respuesta refleje el orden
+    // determinado por `random()`.
+    const rankIndex = new Map(ids.map((id, i) => [id, i]));
+    products.sort(
+      (a, b) => (rankIndex.get(a.id) ?? 0) - (rankIndex.get(b.id) ?? 0),
+    );
+
+    return products.map((p) =>
+      this.toResponse(p, {
+        ...options,
+        stockChannelType: options.stockChannelType ?? 'ECOMMERCE',
+      }),
+    );
+  }
+
+  // ─── Smart search ──────────────────────────────────────────────────────
+
+  /**
+   * Cache de capacidad: la primera llamada a `findIdsBySearch` chequea si
+   * las extensiones `pg_trgm` + `unaccent` y la helper `f_unaccent()` están
+   * disponibles (las trae la migración `20260526150000_search_fuzzy_...`).
+   * Si la migración aún no se aplicó, hacemos fallback gradeado a un
+   * `lower(...) ILIKE` puro — pierde tolerancia a tildes y typos pero
+   * mantiene la búsqueda funcionando (no rompe el storefront).
+   *
+   * El valor se cachea por instancia del service (no se renueva en runtime
+   * porque applying una migración requiere bounce del proceso).
+   */
+  private smartSearchAvailable: boolean | null = null;
+
+  private async checkSmartSearchAvailability(): Promise<boolean> {
+    if (this.smartSearchAvailable !== null) return this.smartSearchAvailable;
+    try {
+      const result = await this.prisma.$queryRaw<[{ exists: boolean }]>`
+        SELECT to_regprocedure('public.f_unaccent(text)') IS NOT NULL AS exists
+      `;
+      this.smartSearchAvailable = result[0]?.exists ?? false;
+    } catch {
+      this.smartSearchAvailable = false;
+    }
+    if (!this.smartSearchAvailable) {
+      this.logger.warn(
+        'Smart search (pg_trgm + unaccent) no está activo en la BD. ' +
+          'La búsqueda usa fallback simple (lower + ILIKE). ' +
+          'Para habilitar fuzzy/tildes: `cd apps/api && npx prisma migrate deploy`.',
+      );
+    } else {
+      this.logger.log('Smart search (pg_trgm + unaccent) activo.');
+    }
+    return this.smartSearchAvailable;
+  }
+
+  /**
+   * Resuelve IDs de productos ranqueados por relevancia para `q`.
+   * Busca en: nombre, SKU, slug de producto y nombre de categorías
+   * asignadas. Aplica filtros canónicos: `active=true` (opcional) y
+   * disponibilidad en canal (`ECOMMERCE` por default desde el controller
+   * público).
+   *
+   * Estrategia:
+   *   · Si extensiones disponibles → trigram similarity + ILIKE +
+   *     unaccent (tolerante a typos y tildes), ranking por score.
+   *   · Si no → lower() + ILIKE (case-insensitive + parcial),
+   *     ranking por prefix + featured + nombre.
+   *
+   * Ambos caminos hacen GROUP BY para deduplicar (el JOIN con categorías
+   * multiplicaría filas) y devuelven hasta `limit` IDs.
+   */
+  private async findIdsBySearch(
+    q: string,
+    opts: {
+      activeOnly?: boolean;
+      channelType?: 'ECOMMERCE' | 'SUCURSAL' | 'ALMACEN';
+      limit?: number;
+    } = {},
+  ): Promise<string[]> {
+    const limit = Math.max(1, Math.min(opts.limit ?? 200, 500));
+    const activeOnly = opts.activeOnly ?? false;
+    const channelType = opts.channelType;
+    const smart = await this.checkSmartSearchAvailability();
+
+    type Row = { id: string };
+
+    // Predicados compartidos por ambas estrategias — se cachean en
+    // SQL fragments para no repetirlos.
+    const activePred = activeOnly
+      ? Prisma.sql`AND p.active = true`
+      : Prisma.empty;
+    const channelPred = channelType
+      ? Prisma.sql`AND EXISTS (
+          SELECT 1
+          FROM product_availability pa
+          JOIN inventory_locations il
+            ON il.id = pa."inventoryLocationId"
+          WHERE pa."productId" = p.id
+            AND pa.active = true
+            AND il.active = true
+            AND il.type::text = ${channelType}
+        )`
+      : Prisma.empty;
+    // Match por categoría — se aísla en EXISTS para no inflar filas con JOIN.
+    // Prisma sólo mapea nombres de TABLA con @@map; las columnas siguen siendo
+    // los nombres exactos del schema (camelCase) y Postgres exige doble comilla.
+    //
+    // Walkamos 3 niveles de la jerarquía (root > sub > leaf, máximo del schema)
+    // para que buscar "joyas" matchee productos de la rama completa aunque
+    // estén asignados a categorías hojas tipo "Collares Plata".
+    const categoryMatch = (
+      buildMatch: (col: Prisma.Sql) => Prisma.Sql,
+    ) => Prisma.sql`
+      EXISTS (
+        SELECT 1
+        FROM product_categories pc
+        JOIN categories c0 ON c0.id = pc."categoryId"
+        LEFT JOIN categories c1 ON c1.id = c0."parentId"
+        LEFT JOIN categories c2 ON c2.id = c1."parentId"
+        WHERE pc."productId" = p.id
+          AND c0.active = true
+          AND (
+            ${buildMatch(Prisma.sql`c0.name`)}
+            OR (c1.id IS NOT NULL AND ${buildMatch(Prisma.sql`c1.name`)})
+            OR (c2.id IS NOT NULL AND ${buildMatch(Prisma.sql`c2.name`)})
+          )
+      )
+    `;
+
+    if (smart) {
+      const rows = await this.prisma.$queryRaw<Row[]>(Prisma.sql`
+        SELECT p.id
+        FROM products p
+        WHERE 1=1
+          ${activePred}
+          ${channelPred}
+          AND (
+            public.f_unaccent(lower(p.name)) % public.f_unaccent(lower(${q}))
+            OR public.f_unaccent(lower(p.name)) ILIKE '%' || public.f_unaccent(lower(${q})) || '%'
+            OR public.f_unaccent(lower(p.sku))  ILIKE '%' || public.f_unaccent(lower(${q})) || '%'
+            OR public.f_unaccent(lower(p.slug)) ILIKE '%' || public.f_unaccent(lower(${q})) || '%'
+            OR ${categoryMatch((col) => Prisma.sql`(
+                public.f_unaccent(lower(${col})) ILIKE '%' || public.f_unaccent(lower(${q})) || '%'
+                OR public.f_unaccent(lower(${col})) % public.f_unaccent(lower(${q}))
+              )`)}
+          )
+        ORDER BY
+          GREATEST(
+            similarity(public.f_unaccent(lower(p.name)), public.f_unaccent(lower(${q}))),
+            similarity(public.f_unaccent(lower(p.sku)),  public.f_unaccent(lower(${q}))) * 0.7,
+            CASE WHEN public.f_unaccent(lower(p.name)) ILIKE public.f_unaccent(lower(${q})) || '%' THEN 1.0 ELSE 0 END,
+            CASE WHEN public.f_unaccent(lower(p.sku))  = public.f_unaccent(lower(${q})) THEN 1.0 ELSE 0 END,
+            CASE WHEN public.f_unaccent(lower(p.slug)) ILIKE public.f_unaccent(lower(${q})) || '%' THEN 0.9 ELSE 0 END
+          ) DESC,
+          p.featured DESC,
+          p.name ASC
+        LIMIT ${limit}
+      `);
+      return rows.map((r) => r.id);
+    }
+
+    // Fallback sin extensiones — case-insensitive con lower(), pero sin tildes ni typos.
+    const rows = await this.prisma.$queryRaw<Row[]>(Prisma.sql`
+      SELECT p.id
+      FROM products p
+      WHERE 1=1
+        ${activePred}
+        ${channelPred}
+        AND (
+          lower(p.name) ILIKE '%' || lower(${q}) || '%'
+          OR lower(p.sku)  ILIKE '%' || lower(${q}) || '%'
+          OR lower(p.slug) ILIKE '%' || lower(${q}) || '%'
+          OR ${categoryMatch((col) => Prisma.sql`lower(${col}) ILIKE '%' || lower(${q}) || '%'`)}
+        )
+      ORDER BY
+        CASE WHEN lower(p.name) ILIKE lower(${q}) || '%' THEN 1 ELSE 0 END DESC,
+        CASE WHEN lower(p.sku)  = lower(${q})              THEN 1 ELSE 0 END DESC,
+        p.featured DESC,
+        p.name ASC
+      LIMIT ${limit}
+    `);
+    return rows.map((r) => r.id);
+  }
+
   private toOrderBy(
     sort: ProductSort,
   ): Prisma.ProductOrderByWithRelationInput {
     const [field, direction] = sort.split(':') as [string, 'asc' | 'desc'];
     return { [field]: direction } as Prisma.ProductOrderByWithRelationInput;
+  }
+
+  /**
+   * Devuelve `[rootId, ...descendientes activos]` recorriendo el árbol de
+   * categorías por BFS en memoria. Se hace en una sola query (todas las
+   * categorías activas, solo `id`+`parentId`). El catálogo de categorías es
+   * pequeño y este método se llama una vez por request público; si el
+   * volumen crece se puede meter cache TTL aquí.
+   *
+   * `rootId` se incluye siempre, aunque la categoría esté inactiva, para
+   * respetar la intención del caller; los descendientes se filtran a
+   * `active=true` para no leakear ramas archivadas.
+   */
+  private async collectCategoryDescendants(rootId: string): Promise<string[]> {
+    const active = await this.prisma.category.findMany({
+      where: { active: true },
+      select: { id: true, parentId: true },
+    });
+
+    const childrenByParent = new Map<string, string[]>();
+    for (const cat of active) {
+      if (!cat.parentId) continue;
+      const arr = childrenByParent.get(cat.parentId) ?? [];
+      arr.push(cat.id);
+      childrenByParent.set(cat.parentId, arr);
+    }
+
+    const result: string[] = [rootId];
+    const queue: string[] = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const children = childrenByParent.get(id);
+      if (!children) continue;
+      for (const childId of children) {
+        result.push(childId);
+        queue.push(childId);
+      }
+    }
+    return result;
   }
 
   private async resolveSlug(
@@ -450,11 +798,27 @@ export class ProductsService {
       product.stock.map((s) => [s.inventoryLocationId, s]),
     );
 
-    const totalStock = product.stock.reduce(
-      (sum, inv) => sum + inv.stock,
-      0,
-    );
-    const totalReserved = product.stock.reduce(
+    // Cuando el caller pide aislar el canal (ej. ECOMMERCE para el storefront)
+    // restringimos el agregado y la lista de availability a ubicaciones de
+    // ese tipo que además estén activas. Si el caller no lo pide (admin/POS),
+    // el comportamiento histórico queda intacto.
+    const channelType = options.stockChannelType;
+    const channelLocationIds = channelType
+      ? new Set(
+          product.availability
+            .filter((a) => a.active && a.location.type === channelType)
+            .map((a) => a.inventoryLocationId),
+        )
+      : null;
+
+    const stockEntries = channelLocationIds
+      ? product.stock.filter((s) =>
+          channelLocationIds.has(s.inventoryLocationId),
+        )
+      : product.stock;
+
+    const totalStock = stockEntries.reduce((sum, inv) => sum + inv.stock, 0);
+    const totalReserved = stockEntries.reduce(
       (sum, inv) => sum + inv.reservedStock,
       0,
     );
@@ -503,18 +867,24 @@ export class ProductsService {
         name: rel.category.name,
         slug: rel.category.slug,
       })),
-      availability: product.availability.map((a) => {
-        const inv = stockByLocation.get(a.inventoryLocationId);
-        return {
-          inventoryLocationId: a.inventoryLocationId,
-          locationName: a.location.name,
-          locationSlug: a.location.slug,
-          locationType: a.location.type,
-          active: a.active,
-          stock: inv?.stock ?? 0,
-          minimumStock: inv?.minimumStock ?? 0,
-        };
-      }),
+      availability: product.availability
+        .filter((a) =>
+          channelLocationIds
+            ? channelLocationIds.has(a.inventoryLocationId)
+            : true,
+        )
+        .map((a) => {
+          const inv = stockByLocation.get(a.inventoryLocationId);
+          return {
+            inventoryLocationId: a.inventoryLocationId,
+            locationName: a.location.name,
+            locationSlug: a.location.slug,
+            locationType: a.location.type,
+            active: a.active,
+            stock: inv?.stock ?? 0,
+            minimumStock: inv?.minimumStock ?? 0,
+          };
+        }),
       inventory: {
         totalStock,
         totalReserved,

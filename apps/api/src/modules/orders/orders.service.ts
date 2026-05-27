@@ -447,6 +447,31 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
+  /**
+   * Lista los pedidos del cliente autenticado (storefront "Mi cuenta").
+   * Filtra estrictamente por `userId` del JWT — un cliente JAMÁS puede ver
+   * pedidos ajenos aunque manipule query params.
+   */
+  async findMine(
+    userId: string,
+    query: OrderQueryDto,
+  ): Promise<Paginated<OrderResponseDto>> {
+    const where: Prisma.OrderWhereInput = { userId };
+    if (query.status) where.status = query.status;
+    if (query.paymentMethod) where.paymentMethod = query.paymentMethod;
+
+    const { items, total } = await this.repository.findMany({
+      where,
+      page: query.page,
+      limit: query.limit,
+    });
+
+    return {
+      items: items.map((o) => this.toResponse(o)),
+      meta: buildPaginationMeta(total, query.page, query.limit),
+    };
+  }
+
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderResponseDto>> {
     const where: Prisma.OrderWhereInput = {};
 

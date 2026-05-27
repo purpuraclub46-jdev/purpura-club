@@ -2,11 +2,13 @@ import type { LucideIcon } from "lucide-react";
 import {
   ArrowRightLeft,
   BarChart3,
+  BookOpen,
   Boxes,
   CreditCard,
   FileText,
   Gift,
   History,
+  Image as ImageIcon,
   KeyRound,
   LayoutDashboard,
   Package,
@@ -74,6 +76,24 @@ export const navSections: NavSection[] = [
         label: "Ecommerce",
         href: "/ecommerce",
         icon: ShoppingBag,
+      },
+      {
+        label: "Banners del home",
+        href: "/banners",
+        icon: ImageIcon,
+        roles: ["ADMIN", "SUPER_ADMIN"],
+      },
+      {
+        label: "Subcategorías del home",
+        href: "/categorias-home",
+        icon: Sparkles,
+        roles: ["ADMIN", "SUPER_ADMIN"],
+      },
+      {
+        label: "Tiendas del home",
+        href: "/tiendas-home",
+        icon: Store,
+        roles: ["ADMIN", "SUPER_ADMIN"],
       },
       {
         label: "Productos",
@@ -186,6 +206,14 @@ export const navSections: NavSection[] = [
         label: "Pagos",
         href: "/pagos",
         icon: CreditCard,
+      },
+      {
+        label: "Libro de Reclamaciones",
+        href: "/reclamos",
+        icon: BookOpen,
+        roles: ["ADMIN", "SUPER_ADMIN"],
+        description:
+          "Reclamos y quejas presentados en el storefront (INDECOPI).",
       },
     ],
   },

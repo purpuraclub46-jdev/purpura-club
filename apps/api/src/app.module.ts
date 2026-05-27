@@ -12,10 +12,14 @@ import { validateEnv } from './config/env.validation';
 import swaggerConfig from './config/swagger.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ComplaintsModule } from './modules/complaints/complaints.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { EmailsModule } from './modules/emails/emails.module';
 import { FiscalModule } from './modules/fiscal/fiscal.module';
 import { HealthModule } from './modules/health/health.module';
+import { HomeBannersModule } from './modules/home-banners/home-banners.module';
+import { HomeCategoriesModule } from './modules/home-categories/home-categories.module';
+import { HomeStoresModule } from './modules/home-stores/home-stores.module';
 import { InventoryLocationsModule } from './modules/inventory-locations/inventory-locations.module';
 import { InventoryTransfersModule } from './modules/inventory-transfers/inventory-transfers.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
@@ -57,7 +61,11 @@ import { PrismaModule } from './prisma/prisma.module';
     RafflesModule,
     RaffleEntriesModule,
     RafflePrizesModule,
+    HomeBannersModule,
+    HomeCategoriesModule,
+    HomeStoresModule,
     CategoriesModule,
+    ComplaintsModule,
     ProductsModule,
     InventoryLocationsModule,
     InventoryModule,

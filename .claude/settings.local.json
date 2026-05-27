@@ -33,7 +33,10 @@
       "PowerShell(\"ok\")",
       "PowerShell(Get-Process -Id 6588, 11068, 17812, 21440, 27228 -ErrorAction SilentlyContinue)",
       "Bash(curl -s -X POST http://127.0.0.1:3000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"superadmin@purpura.club\",\"password\":\"SuperAdmin123!\"}')",
-      "Bash(grep -v \"0$\")"
+      "Bash(grep -v \"0$\")",
+      "Bash(npm --workspace apps/api run build)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\louis\\\\Desktop\\\\purpura-club\\\\apps\\\\api\\\\src\\\\modules\" -Directory)",
+      "Bash(Select-Object Name)"
     ],
     "additionalDirectories": [
       "C:\\Users\\louis\\Desktop\\purpura-club\\apps\\api\\src\\common"

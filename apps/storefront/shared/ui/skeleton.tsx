@@ -1,0 +1,17 @@
+import * as React from "react";
+import { cn } from "@/shared/lib/cn";
+
+export function Skeleton({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn(
+        "animate-pulse rounded-md bg-[#1111110a]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}

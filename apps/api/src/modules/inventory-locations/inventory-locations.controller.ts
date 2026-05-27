@@ -26,6 +26,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -44,6 +45,18 @@ import { InventoryLocationsService } from './inventory-locations.service';
 @Controller({ path: 'inventory-locations', version: '1' })
 export class InventoryLocationsController {
   constructor(private readonly service: InventoryLocationsService) {}
+
+  @Public()
+  @Get('public/stores')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Listar sucursales físicas activas (storefront público — "Nuestras tiendas")',
+  })
+  @ApiOkResponse({ type: [InventoryLocationResponseDto] })
+  publicStores() {
+    return this.service.findPublicStores();
+  }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get()

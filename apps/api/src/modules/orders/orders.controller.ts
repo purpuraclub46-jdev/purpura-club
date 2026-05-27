@@ -54,6 +54,23 @@ export class OrdersController {
     return this.service.findMany(query);
   }
 
+  // Sin @Roles → cualquier usuario autenticado puede acceder a SUS pedidos.
+  // El service filtra estrictamente por userId del JWT.
+  @Get('me')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Listar mis pedidos (storefront — cliente autenticado ve solo los suyos)',
+  })
+  @ApiOkResponse({ type: PaginatedOrdersResponseDto })
+  @ApiUnauthorizedResponse()
+  listMine(
+    @CurrentUser('id') userId: string,
+    @Query() query: OrderQueryDto,
+  ) {
+    return this.service.findMine(userId, query);
+  }
+
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get(':id')
   @HttpCode(HttpStatus.OK)

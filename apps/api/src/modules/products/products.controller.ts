@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -54,11 +56,29 @@ export class ProductsController {
   })
   @ApiOkResponse({ type: PaginatedProductsResponseDto })
   listPublic(@Query() query: ProductQueryDto) {
-    return this.service.findMany({
-      ...query,
-      active: true,
-      availableForType: query.inventoryLocationId ? undefined : 'ECOMMERCE',
-    });
+    return this.service.findMany(
+      {
+        ...query,
+        active: true,
+        availableForType: query.inventoryLocationId ? undefined : 'ECOMMERCE',
+        expandCategoryDescendants: true,
+      },
+      { stockChannelType: 'ECOMMERCE' },
+    );
+  }
+
+  @Public()
+  @Get('random-home')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Selección aleatoria de productos ECOMMERCE — feed curado del home, refrescado en cada request.',
+  })
+  @ApiOkResponse({ type: [ProductResponseDto] })
+  randomForHome(
+    @Query('limit', new DefaultValuePipe(12), ParseIntPipe) limit: number,
+  ) {
+    return this.service.findRandomForHome(limit);
   }
 
   @Public()

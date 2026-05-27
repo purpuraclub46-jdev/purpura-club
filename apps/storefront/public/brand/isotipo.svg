@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500&amp;display=swap');
+    </style>
+  </defs>
+  <text x="200" y="200" font-family="'Montserrat', sans-serif" font-size="192" font-weight="500" fill="#9810FA" text-anchor="middle" dominant-baseline="middle">:P</text>
+</svg>

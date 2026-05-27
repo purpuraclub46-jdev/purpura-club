@@ -241,3 +241,187 @@ export interface UpdateRolePayload {
   active?: boolean;
   permissionKeys?: string[];
 }
+
+// ─── Home stores (boutique showcase) ─────────────────────────────────────
+
+export interface HomeStoreEntity {
+  id: string;
+  name: string;
+  city: string;
+  address: string;
+  reference: string | null;
+  whatsapp: string | null;
+  schedule: string | null;
+  mapsUrl: string | null;
+  imageDesktop: string | null;
+  imageMobile: string | null;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateHomeStorePayload {
+  name: string;
+  city: string;
+  address: string;
+  reference?: string;
+  whatsapp?: string;
+  schedule?: string;
+  mapsUrl?: string;
+  imageDesktop?: string;
+  imageMobile?: string;
+  sortOrder?: number;
+  active?: boolean;
+}
+
+export type UpdateHomeStorePayload = Partial<CreateHomeStorePayload>;
+
+// ─── Home categories (carrusel editorial) ────────────────────────────────
+
+export type HomeCategorySlot =
+  | "PERFUMES_HOMBRE"
+  | "PERFUMES_MUJER"
+  | "JOYAS_ACERO_DORADO"
+  | "JOYAS_ACERO_PLATEADO"
+  | "JOYAS_BANADAS_ORO"
+  | "JOYAS_PLATA";
+
+export interface HomeCategoryEntity {
+  id: string;
+  slot: HomeCategorySlot;
+  sortOrder: number;
+  active: boolean;
+  eyebrow: string | null;
+  label: string;
+  ctaHref: string;
+  imageDesktop: string | null;
+  imageMobile: string | null;
+  overlayColor: string;
+  overlayOpacity: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateHomeCategoryPayload {
+  sortOrder?: number;
+  active?: boolean;
+  eyebrow?: string;
+  label?: string;
+  ctaHref?: string;
+  imageDesktop?: string;
+  imageMobile?: string;
+  overlayColor?: string;
+  overlayOpacity?: number;
+}
+
+// ─── Home banners ────────────────────────────────────────────────────────
+
+export type HomeBannerSlot = "JEWELRY" | "PERFUME" | "RAFFLE" | "FLEXIBLE";
+export type HomeBannerAlign = "LEFT" | "CENTER" | "RIGHT";
+
+export interface HomeBannerEntity {
+  id: string;
+  slot: HomeBannerSlot;
+  order: number;
+  active: boolean;
+  eyebrow: string | null;
+  title: string;
+  subtitle: string | null;
+  ctaLabel: string;
+  ctaHref: string;
+  imageDesktop: string | null;
+  imageMobile: string | null;
+  overlayColor: string;
+  overlayOpacity: number;
+  align: HomeBannerAlign;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateHomeBannerPayload {
+  order?: number;
+  active?: boolean;
+  eyebrow?: string;
+  title?: string;
+  subtitle?: string;
+  ctaLabel?: string;
+  ctaHref?: string;
+  imageDesktop?: string;
+  imageMobile?: string;
+  overlayColor?: string;
+  overlayOpacity?: number;
+  align?: HomeBannerAlign;
+}
+
+// ─── Libro de Reclamaciones (INDECOPI · Peru) ────────────────────────────
+
+export type ComplaintType = "RECLAMO" | "QUEJA";
+export type ComplaintSubjectType = "PRODUCTO" | "SERVICIO";
+export type ComplaintStatus = "PENDIENTE" | "EN_REVISION" | "RESUELTO";
+export type ComplaintDocumentType = "DNI" | "CE" | "PASSPORT" | "RUC";
+
+export interface ComplaintEntity {
+  id: string;
+  ticketNumber: string;
+  firstName: string;
+  lastName: string;
+  documentType: ComplaintDocumentType;
+  documentNumber: string;
+  phone: string;
+  email: string;
+  address: string;
+  isMinor: boolean;
+  guardianFullName: string | null;
+  guardianDocument: string | null;
+  type: ComplaintType;
+  subjectType: ComplaintSubjectType;
+  subjectDetail: string;
+  amount: number | null;
+  description: string;
+  consumerRequest: string;
+  status: ComplaintStatus;
+  response: string | null;
+  internalNotes: string | null;
+  resolvedAt: string | null;
+  resolvedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplaintListQuery {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: ComplaintStatus;
+  type?: ComplaintType;
+}
+
+export interface UpdateComplaintPayload {
+  status?: ComplaintStatus;
+  response?: string;
+  internalNotes?: string;
+}
+
+export const COMPLAINT_STATUS_LABEL: Record<ComplaintStatus, string> = {
+  PENDIENTE: "Pendiente",
+  EN_REVISION: "En revisión",
+  RESUELTO: "Resuelto",
+};
+
+export const COMPLAINT_TYPE_LABEL: Record<ComplaintType, string> = {
+  RECLAMO: "Reclamo",
+  QUEJA: "Queja",
+};
+
+export const COMPLAINT_SUBJECT_LABEL: Record<ComplaintSubjectType, string> = {
+  PRODUCTO: "Producto",
+  SERVICIO: "Servicio",
+};
+
+export const COMPLAINT_DOCUMENT_LABEL: Record<ComplaintDocumentType, string> = {
+  DNI: "DNI",
+  CE: "Carné de extranjería",
+  PASSPORT: "Pasaporte",
+  RUC: "RUC",
+};

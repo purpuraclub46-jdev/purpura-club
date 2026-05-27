@@ -1154,3 +1154,271 @@ model POSCreditNoteItem {
   @@index([orderItemId])
   @@map("pos_credit_note_items")
 }
+
+// ─────────────────────────────────────────────
+// HOME BANNERS — CMS editorial (storefront)
+// ─────────────────────────────────────────────
+//
+// 4 slots fijos para el hero del home (stack vertical editorial):
+//   JEWELRY, PERFUME, RAFFLE, FLEXIBLE.
+// Cada slot es único y editable desde el panel SUPERADMIN. El slot FLEXIBLE
+// puede desactivarse (active=false) para ocultar la franja en el storefront.
+//
+// Las imágenes son URLs públicas (HTTPS) administradas externamente — el repo
+// no incluye sistema de upload, mismo patrón que productos y rifas. Se separan
+// imagen desktop (cinematográfica horizontal) e imagen mobile (crop vertical
+// optimizado) para evitar recortes pobres en mobile.
+
+enum HomeBannerSlot {
+  JEWELRY
+  PERFUME
+  RAFFLE
+  FLEXIBLE
+}
+
+enum HomeBannerAlign {
+  LEFT
+  CENTER
+  RIGHT
+}
+
+// ─────────────────────────────────────────────
+// HOME CATEGORIES — Carrusel editorial (storefront)
+// ─────────────────────────────────────────────
+//
+// 3 slots fijos para el "category showcase" del home (carrusel horizontal):
+//   JEWELRY, PERFUME, RAFFLE.
+//
+// Cada slot vive aparte del modelo `Category` del catálogo porque:
+//   1. RAFFLE no es una categoría de producto (apunta a /sorteos).
+//   2. La presentación editorial del home tiene sus propias imágenes y
+//      overlays, independientes del catálogo.
+//   3. Permite editar el showcase sin alterar la taxonomía de productos.
+
+enum HomeCategorySlot {
+  PERFUMES_HOMBRE
+  PERFUMES_MUJER
+  JOYAS_ACERO_DORADO
+  JOYAS_ACERO_PLATEADO
+  JOYAS_BANADAS_ORO
+  JOYAS_PLATA
+}
+
+model HomeCategory {
+  id     String           @id @default(uuid()) @db.Uuid
+  /// Slot fijo del showcase. Único — solo existe una card por slot.
+  slot   HomeCategorySlot @unique
+  /// Orden de aparición en el carrusel (ASC). Por defecto refleja el orden
+  /// semántico: JEWELRY=1, PERFUME=2, RAFFLE=3.
+  sortOrder Int           @default(0)
+  /// Si false, la card se oculta del storefront sin borrar la config.
+  active    Boolean       @default(true)
+
+  /// Micro-etiqueta superior (uppercase tracking). Ej. "Joyería".
+  eyebrow  String?
+  /// Nombre principal mostrado en la card. Ej. "Joyas".
+  label    String
+  /// Destino del CTA (path relativo o URL absoluta).
+  ctaHref  String
+
+  /// URL de la imagen para desktop (composición horizontal/cuadrada).
+  imageDesktop String?
+  /// URL de la imagen para mobile (crop vertical).
+  imageMobile  String?
+
+  /// Color del overlay sobre la imagen (HEX, ej. "#0A0A0A").
+  overlayColor   String @default("#0A0A0A")
+  /// Opacidad del overlay (0-100). Mayor = más oscuro = mejor legibilidad.
+  overlayOpacity Int    @default(35)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("home_categories")
+}
+
+// ─────────────────────────────────────────────
+// HOME STORES — Boutique showcase (storefront)
+// ─────────────────────────────────────────────
+//
+// CRUD ilimitado de tiendas físicas que se muestran en el carrusel del home.
+// Separado del modelo operacional `InventoryLocation` porque:
+//   1. La presentación editorial del home tiene campos específicos
+//      (imageDesktop, imageMobile, mapsUrl, schedule, whatsapp) que no
+//      pertenecen al dominio POS/inventario.
+//   2. Permite tener boutiques temporales / showrooms en el home que NO
+//      son ubicaciones de inventario.
+//   3. Da control editorial total (orden, activación, edición) sin riesgo
+//      de afectar stock o POS.
+
+model HomeStore {
+  id           String   @id @default(uuid()) @db.Uuid
+  /// Nombre comercial. Ej. "Plaza del Sol — Ica".
+  name         String
+  /// Ciudad — mostrada arriba del nombre como eyebrow.
+  city         String
+  /// Dirección postal completa.
+  address      String
+  /// Referencia opcional ("Frente al parque central").
+  reference    String?
+  /// Número de WhatsApp (con código país, ej. +51999111222).
+  whatsapp     String?
+  /// Horario de atención libre ("Lun a sáb · 10:00 – 22:00").
+  schedule     String?
+  /// URL de Google Maps para el botón "Cómo llegar".
+  mapsUrl      String?
+  /// URL HTTPS de la imagen para desktop (composición horizontal o cuadrada).
+  imageDesktop String?
+  /// URL HTTPS de la imagen para mobile (crop vertical).
+  imageMobile  String?
+  /// Orden de aparición en el carrusel (ASC).
+  sortOrder    Int      @default(0)
+  /// Si false, la tienda se oculta del storefront sin borrar la config.
+  active       Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("home_stores")
+}
+
+model HomeBanner {
+  id     String          @id @default(uuid()) @db.Uuid
+  /// Slot fijo del home. Único — solo existe un banner por slot.
+  slot   HomeBannerSlot  @unique
+  /// Orden de aparición en el stack vertical (ASC). Por defecto refleja el
+  /// orden semántico: JEWELRY=1, PERFUME=2, RAFFLE=3, FLEXIBLE=4.
+  order  Int             @default(0)
+  active Boolean         @default(true)
+
+  /// Pre-título corto (uppercase tracking). Ej. "Joyería atemporal".
+  eyebrow  String?
+  /// Título principal (font-serif). Ej. "El detalle que distingue".
+  title    String
+  /// Subcopy descriptiva. Opcional.
+  subtitle String?
+
+  /// Texto del CTA. Ej. "Ver productos", "Ir a sorteos".
+  ctaLabel String
+  /// Destino del CTA (path relativo o URL absoluta).
+  ctaHref  String
+
+  /// URL de la imagen para desktop (composición horizontal).
+  imageDesktop String?
+  /// URL de la imagen para mobile (composición vertical).
+  imageMobile  String?
+
+  /// Color del overlay sobre la imagen (HEX, ej. "#0A0A0A").
+  overlayColor   String          @default("#0A0A0A")
+  /// Opacidad del overlay (0-100). Permite balancear legibilidad vs imagen.
+  overlayOpacity Int             @default(40)
+  /// Alineación del bloque de texto sobre el banner.
+  align          HomeBannerAlign @default(LEFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, order])
+  @@map("home_banners")
+}
+
+// ─────────────────────────────────────────────
+// LIBRO DE RECLAMACIONES (Peru INDECOPI)
+// ─────────────────────────────────────────────
+// Registro digital del Libro de Reclamaciones requerido por el Código de
+// Protección y Defensa del Consumidor (Ley 29571 / D.S. 011-2011-PCM).
+// Cada submission queda inmutable en su payload original; el admin solo
+// gestiona el estado y la respuesta oficial.
+
+enum ComplaintType {
+  /// Reclamo: disconformidad con un producto/servicio recibido.
+  RECLAMO
+  /// Queja: malestar respecto a la atención al consumidor.
+  QUEJA
+}
+
+enum ComplaintSubjectType {
+  PRODUCTO
+  SERVICIO
+}
+
+enum ComplaintStatus {
+  /// Recién recibido, pendiente de asignación.
+  PENDIENTE
+  /// En revisión por un agente. Tiene 30 días calendario por norma.
+  EN_REVISION
+  /// Resuelto con respuesta enviada al consumidor.
+  RESUELTO
+}
+
+enum ComplaintDocumentType {
+  DNI
+  CE
+  PASSPORT
+  RUC
+}
+
+model Complaint {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Folio público correlativo amigable al usuario. Se imprime en el
+  /// acuse, se usa en comunicaciones con el consumidor. Único.
+  /// Formato sugerido: "LR-YYYY-NNNNNN" (LR = Libro de Reclamaciones).
+  /// Generado por el service en una transacción para evitar carreras.
+  ticketNumber String @unique
+
+  // ─── Consumidor ─────────────────────────────────
+  firstName    String
+  lastName     String
+  documentType ComplaintDocumentType @default(DNI)
+  documentNumber String
+  phone        String
+  email        String
+  address      String
+
+  // Solo si el consumidor es menor de edad — campos del padre/madre o tutor.
+  /// true cuando el consumidor declara ser menor de edad. Si es true,
+  /// `guardianFullName` y `guardianDocument` son requeridos por el service.
+  isMinor          Boolean @default(false)
+  guardianFullName String?
+  guardianDocument String?
+
+  // ─── Detalle del reclamo ────────────────────────
+  type           ComplaintType
+  subjectType    ComplaintSubjectType
+  /// Descripción del producto/servicio adquirido.
+  subjectDetail  String
+  /// Monto reclamado en soles (decimal). Opcional.
+  amount         Decimal? @db.Decimal(12, 2)
+  /// Detalle completo del reclamo (texto libre).
+  description    String
+  /// Pedido específico del consumidor — qué solución espera.
+  consumerRequest String
+
+  // ─── Estado interno ─────────────────────────────
+  status     ComplaintStatus @default(PENDIENTE)
+  /// Respuesta oficial enviada al consumidor (si aplica).
+  response   String?
+  /// Notas internas — no se comparten con el consumidor.
+  internalNotes String?
+  /// Cuándo el reclamo cambió a RESUELTO.
+  resolvedAt DateTime?
+  /// Quién resolvió el reclamo (admin user). SetNull si el user se borra.
+  resolvedByUserId String? @db.Uuid
+
+  // ─── Trazabilidad ───────────────────────────────
+  /// IP del consumidor al momento de la presentación. Útil para auditoría.
+  submittedIp String?
+  /// User-Agent del navegador al momento de la presentación.
+  submittedUserAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([documentNumber])
+  @@index([email])
+  @@map("complaints")
+}

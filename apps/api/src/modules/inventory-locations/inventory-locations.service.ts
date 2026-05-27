@@ -227,6 +227,22 @@ export class InventoryLocationsService {
     return this.toResponse(location);
   }
 
+  /**
+   * Lista pública de sucursales físicas activas — pensado para el storefront
+   * ("Nuestras tiendas"). NO incluye ECOMMERCE ni ALMACEN, NO requiere auth.
+   */
+  async findPublicStores(): Promise<InventoryLocationResponseDto[]> {
+    const stores = await this.prisma.inventoryLocation.findMany({
+      where: {
+        active: true,
+        type: InventoryLocationType.SUCURSAL,
+      },
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { stock: true } } },
+    });
+    return stores.map((l) => this.toResponse(l));
+  }
+
   async findMany(
     query: InventoryLocationQueryDto,
   ): Promise<Paginated<InventoryLocationResponseDto>> {
