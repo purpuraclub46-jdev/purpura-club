@@ -40,29 +40,137 @@ export class AuthService {
     private readonly tokenHelper: TokenHelper,
   ) {}
 
+  /**
+   * Registro atómico User + Customer (FASE 1 — CRÍTICO #1).
+   *
+   * Garantía: todo usuario registrado tiene Customer asociado en la misma
+   * transacción. Si el DNI provisto coincide con un Customer walk-in
+   * pre-existente (POS) sin cuenta, se enlaza en lugar de duplicar.
+   *
+   * Política de dedupe aprobada en FASE 0.5:
+   *   - Auto-match SOLO por DNI (estricto, sin falsos positivos).
+   *   - NO auto-match por email ni teléfono (familias / errores tipográficos).
+   *   - NO retroactivar membership/raffles/beneficios a compras POS pasadas.
+   *
+   * Failure modes:
+   *   - email duplicado en User → 409
+   *   - DNI duplicado en User → 409
+   *   - DNI ya pertenece a un Customer YA linkeado a otro User → 409
+   *     (la persona ya tiene cuenta, debe iniciar sesión, no registrarse)
+   *   - Cualquier fallo dentro de la TX → rollback completo (no queda User huérfano)
+   */
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
-    const existing = await this.prisma.user.findUnique({
+    // ─── Pre-flight checks ──────────────────────────────────────────────
+    // Lecturas idempotentes fuera de TX para dar errores claros antes de
+    // hashear la password (que es la operación más cara).
+    const existingByEmail = await this.prisma.user.findUnique({
       where: { email: dto.email },
       select: { id: true },
     });
-
-    if (existing) {
+    if (existingByEmail) {
       throw new ConflictException('An account with this email already exists');
+    }
+
+    if (dto.dni) {
+      const existingUserByDni = await this.prisma.user.findUnique({
+        where: { dni: dto.dni },
+        select: { id: true },
+      });
+      if (existingUserByDni) {
+        throw new ConflictException(
+          'This DNI already belongs to another account',
+        );
+      }
+
+      // Anti-typo: si el DNI pertenece a un Customer YA linkeado a otro
+      // User, el cliente probablemente ya tiene cuenta y olvidó. Devolver
+      // 409 con copy específico (storefront lo puede traducir a "¿olvidaste
+      // tu contraseña?").
+      const linkedCustomerWithDni = await this.prisma.customer.findUnique({
+        where: { dni: dto.dni },
+        select: { id: true, userId: true },
+      });
+      if (linkedCustomerWithDni && linkedCustomerWithDni.userId) {
+        throw new ConflictException(
+          'This DNI already belongs to another account',
+        );
+      }
     }
 
     const passwordHash = await this.passwordHelper.hash(dto.password);
 
     try {
-      await this.prisma.user.create({
-        data: {
-          email: dto.email,
-          password: passwordHash,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          role: Role.USER,
-        },
+      const createdUserId = await this.prisma.$transaction(async (tx) => {
+        // 1. Crear User
+        const user = await tx.user.create({
+          data: {
+            email: dto.email,
+            password: passwordHash,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            dni: dto.dni ?? null,
+            role: Role.USER,
+          },
+          select: { id: true },
+        });
+
+        // 2. Buscar Customer huérfano por DNI (solo si DNI provisto).
+        //    Político: SOLO match por DNI. Email/phone no se usan para dedupe.
+        let orphanCustomer: {
+          id: string;
+          email: string | null;
+          phone: string | null;
+        } | null = null;
+
+        if (dto.dni) {
+          orphanCustomer = await tx.customer.findFirst({
+            where: { dni: dto.dni, userId: null },
+            select: { id: true, email: true, phone: true },
+          });
+        }
+
+        // 3a. Vincular Customer huérfano si existe
+        if (orphanCustomer) {
+          await tx.customer.update({
+            where: { id: orphanCustomer.id },
+            data: {
+              userId: user.id,
+              // Preservar email/phone del walk-in si fueron capturados en POS
+              // (datos verificados por cajero). Solo rellenar si eran null.
+              email: orphanCustomer.email ?? dto.email,
+              phone: orphanCustomer.phone ?? dto.phone ?? null,
+            },
+          });
+          this.logger.log(
+            `[auth.register] Linked orphan customer ${orphanCustomer.id} ` +
+              `to new user ${user.id} via DNI dedupe`,
+          );
+        } else {
+          // 3b. Crear Customer nuevo vinculado al User
+          await tx.customer.create({
+            data: {
+              userId: user.id,
+              firstName: dto.firstName,
+              lastName: dto.lastName,
+              fullName: `${dto.firstName} ${dto.lastName}`.trim(),
+              email: dto.email,
+              phone: dto.phone ?? null,
+              dni: dto.dni ?? null,
+              // documentType default DNI (schema default). Cliente puede
+              // cambiarlo a CE/PASSPORT/RUC desde su perfil después.
+              active: true,
+              isMember: false,
+            },
+          });
+          this.logger.log(
+            `[auth.register] Created new customer for user ${user.id}`,
+          );
+        }
+
+        return user.id;
       });
 
+      // Lecturas y side-effects fuera de TX (post-commit).
       const enriched = await this.loadWithRbac(dto.email);
       this.logger.log(`User registered: ${enriched.id}`);
 
@@ -77,7 +185,26 @@ export class AuthService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('An account with this email already exists');
+        // Constraint violation race. Mapear según target.
+        const target = (error.meta?.target as string[] | undefined) ?? [];
+        if (target.includes('email')) {
+          throw new ConflictException(
+            'An account with this email already exists',
+          );
+        }
+        if (target.includes('dni')) {
+          throw new ConflictException(
+            'This DNI already belongs to another account',
+          );
+        }
+        if (target.includes('userId')) {
+          // Customer.userId @unique violado — race condition extrema.
+          // Nunca debería ocurrir porque el User es recién creado en esta TX.
+          throw new ConflictException(
+            'A duplicate customer link was detected',
+          );
+        }
+        throw new ConflictException('A duplicate entry conflict occurred');
       }
       throw error;
     }

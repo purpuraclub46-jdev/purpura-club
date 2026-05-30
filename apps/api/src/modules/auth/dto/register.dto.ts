@@ -1,8 +1,9 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -11,6 +12,14 @@ import {
 
 const PASSWORD_REGEX =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/;
+
+// DNI peruano: exactamente 8 dígitos. Para CE/PASSPORT el cliente edita
+// `documentType` desde /mi-cuenta/perfil después del registro.
+const DNI_REGEX = /^\d{8}$/;
+
+// Teléfono permisivo: dígitos, espacios, guiones y prefijo opcional "+".
+// Validación estricta de formato vive en el flujo de checkout, no en registro.
+const PHONE_REGEX = /^[+\d][\d\s\-()]{5,29}$/;
 
 export class RegisterDto {
   @ApiProperty({
@@ -67,4 +76,40 @@ export class RegisterDto {
   @MinLength(1)
   @MaxLength(100)
   lastName!: string;
+
+  // ─── Campos opcionales para dedupe + sync Customer ────────────────────
+  //
+  // El registro acepta DNI y teléfono de forma OPCIONAL. Si vienen, se
+  // copian al perfil Customer y habilitan el auto-link con cualquier
+  // Customer walk-in pre-existente que comparta DNI (FASE 1, CRÍTICO #1).
+  // Si no vienen, se crea un Customer vacío de DNI — el cliente puede
+  // completarlo más tarde desde /mi-cuenta/perfil.
+
+  @ApiPropertyOptional({
+    description:
+      'DNI peruano (8 dígitos). Si coincide con un Customer walk-in existente sin cuenta, se enlaza automáticamente.',
+    example: '72345678',
+    pattern: '^\\d{8}$',
+  })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @Matches(DNI_REGEX, { message: 'dni must be exactly 8 digits' })
+  dni?: string;
+
+  @ApiPropertyOptional({
+    description: 'Teléfono de contacto (opcional, sin formato estricto).',
+    example: '+51 987 654 321',
+    minLength: 6,
+    maxLength: 30,
+  })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(6)
+  @MaxLength(30)
+  @Matches(PHONE_REGEX, {
+    message: 'phone must contain only digits, spaces, dashes and parentheses',
+  })
+  phone?: string;
 }
