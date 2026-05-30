@@ -582,7 +582,7 @@ function FallbackImage({ hadUrl }: { hadUrl: boolean }) {
 }
 
 /**
- * Isotipo `:P` inline (en lugar de cargar `/brand/isotipo.svg`) para tener
+ * Isotipo `:P` inline (en lugar de cargar `/brand/isotipo-nuevo.svg`) para tener
  * control total de color y opacidad y no depender de Google Fonts. Usa
  * `var(--font-geist-sans)` que es la tipografía del proyecto.
  */

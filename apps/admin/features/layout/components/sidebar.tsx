@@ -171,7 +171,7 @@ export function Sidebar() {
         >
           {collapsed ? (
             <Image
-              src="/images/isotipo.svg"
+              src="/brand/isotipo-nuevo.svg"
               alt=""
               width={28}
               height={28}
@@ -180,12 +180,12 @@ export function Sidebar() {
             />
           ) : (
             <Image
-              src="/images/logotipo.svg"
+              src="/brand/logotipo-nuevo-1.svg"
               alt="Purpura Club"
-              width={160}
-              height={32}
+              width={213}
+              height={80}
               priority
-              className="h-7 w-auto"
+              className="h-8 w-auto"
             />
           )}
         </Link>

@@ -3,7 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useAuthStore } from "@/stores/auth.store";
-import { authApi, type LoginPayload, type RegisterPayload } from "../api/auth.api";
+import {
+  authApi,
+  type ForgotPasswordPayload,
+  type LoginPayload,
+  type RegisterPayload,
+} from "../api/auth.api";
 
 export const authKeys = {
   me: ["auth", "me"] as const,
@@ -22,6 +27,13 @@ export const useRegister = () => {
   return useMutation({
     mutationFn: (payload: RegisterPayload) => authApi.register(payload),
     onSuccess: (res) => setSession(res.user, res.tokens),
+  });
+};
+
+export const useForgotPassword = () => {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordPayload) =>
+      authApi.forgotPassword(payload),
   });
 };
 

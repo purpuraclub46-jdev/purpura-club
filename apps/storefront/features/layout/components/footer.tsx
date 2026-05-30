@@ -42,18 +42,18 @@ export function Footer() {
           <div className="space-y-5">
             <Link href="/" className="inline-flex items-center gap-2">
               <Image
-                src="/images/isotipo.svg"
+                src="/brand/isotipo-nuevo.svg"
                 alt="Purpura Club"
                 width={32}
                 height={32}
                 className="size-8"
               />
               <Image
-                src="/images/logotipo.svg"
+                src="/brand/logotipo-nuevo-1.svg"
                 alt="Purpura Club"
-                width={120}
-                height={20}
-                className="h-4 w-auto"
+                width={160}
+                height={60}
+                className="h-7 w-auto"
               />
             </Link>
             <p className="max-w-xs text-[12.5px] leading-relaxed text-[#0A0A0A]/55">
@@ -112,9 +112,11 @@ const COLUMNS: Array<{
   {
     title: "Ayuda",
     links: [
-      { label: "Tiendas", href: "/#tiendas" },
-      { label: "Políticas de devolución", href: "/politicas" },
-      { label: "Términos y condiciones", href: "/terminos" },
+      { label: "Políticas de devolución", href: "/politicas/devolucion" },
+      { label: "Políticas de envío", href: "/politicas/envio" },
+      { label: "Políticas de privacidad", href: "/politicas/privacidad" },
+      { label: "Tips para cuidar tus joyas", href: "/tips-joyas" },
+      { label: "Política de lavado de activos", href: "/politicas/lavado-de-activos" },
       { label: "Libro de reclamaciones", href: "/libro-de-reclamaciones" },
     ],
   },
@@ -197,232 +199,117 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-// ─── Social icons (real brand SVGs, monochrome editorial) ─────────────────
+// ─── Social icons (logos oficiales PNG en /public/footer) ────────────────
+//
+// Por ahora solo Instagram tiene URL real. Facebook y TikTok quedan
+// montados como placeholders (`href` vacío + `aria-disabled`) para que
+// cuando llegue el momento solo haya que llenar el `href`; el resto
+// (estilos, accesibilidad) ya queda en su sitio.
 
 interface SocialDef {
   label: string;
-  href: string;
-  icon: (props: { className?: string }) => ReactNode;
+  href: string | null;
+  src: string;
 }
 
 const SOCIALS: SocialDef[] = [
   {
     label: "Instagram",
-    href: "https://instagram.com/purpura.club",
-    icon: InstagramGlyph,
+    href: "https://www.instagram.com/purpura.club.pe?igsh=bjFnMzl6dnkyN2Vs",
+    src: "/footer/instagram.png",
   },
   {
     label: "TikTok",
-    href: "https://tiktok.com/@purpura.club",
-    icon: TikTokGlyph,
+    href: null,
+    src: "/footer/tiktok.png",
   },
   {
     label: "Facebook",
-    href: "https://facebook.com/purpura.club",
-    icon: FacebookGlyph,
+    href: null,
+    src: "/footer/facebook.png",
   },
 ];
 
 function SocialLinks() {
   return (
-    <ul className="flex items-center gap-2.5">
-      {SOCIALS.map(({ label, href, icon: Icon }) => (
-        <li key={label}>
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={label}
-            className={cn(
-              "group/social inline-flex size-9 items-center justify-center rounded-full",
-              "border border-[#11111118] text-[#0A0A0A]/70 transition-all duration-300 ease-out",
-              "hover:-translate-y-px hover:border-[#9810FA] hover:text-[#9810FA]",
-              "hover:shadow-[0_8px_18px_-10px_rgba(152,16,250,0.45)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9810FA] focus-visible:ring-offset-2",
+    <ul className="flex items-center gap-4">
+      {SOCIALS.map(({ label, href, src }) => {
+        const disabled = href === null;
+        // Logo limpio, sin contenedor — opacity baja por default + lift sutil
+        // y micro-scale en hover. Estética Apple/Dior/COS: el logo manda,
+        // todo lo demás respira.
+        const baseClass = cn(
+          "group/social inline-flex items-center justify-center opacity-80",
+          "transition-all duration-300 ease-out",
+          "hover:-translate-y-0.5 hover:scale-105 hover:opacity-100",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9810FA] focus-visible:ring-offset-2 focus-visible:rounded-sm",
+        );
+        const inner = (
+          <Image
+            src={src}
+            alt={label}
+            width={24}
+            height={24}
+            className="size-6 object-contain"
+          />
+        );
+        return (
+          <li key={label}>
+            {disabled ? (
+              // Placeholder hasta que tengamos URL oficial — el target queda
+              // listo (estilos, accesibilidad, asset). Solo falta llenar el
+              // `href` cuando llegue el momento.
+              <span
+                role="link"
+                aria-disabled
+                aria-label={`${label} (próximamente)`}
+                className={cn(baseClass, "cursor-default opacity-60")}
+              >
+                {inner}
+              </span>
+            ) : (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={label}
+                className={baseClass}
+              >
+                {inner}
+              </a>
             )}
-          >
-            <Icon className="size-3.5" />
-          </a>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
-/** Instagram glyph — outline minimal (cuadrado + círculo + dot). */
-function InstagramGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <rect x="3" y="3" width="18" height="18" rx="5" />
-      <circle cx="12" cy="12" r="4" />
-      <circle cx="17.5" cy="6.5" r="0.9" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-/** TikTok glyph — outline minimal stylized note. */
-function TikTokGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M14 3v10.5a3.5 3.5 0 1 1-3.5-3.5" />
-      <path d="M14 3c.4 2.3 2.2 4.1 4.5 4.5" />
-    </svg>
-  );
-}
-
-/** Facebook glyph — outline minimal "f". */
-function FacebookGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M14.5 8h-1.6c-.7 0-1.2.5-1.2 1.2V11h2.8l-.4 3h-2.4v7" />
-      <rect x="3" y="3" width="18" height="18" rx="5" />
-      <path d="M9 14h2.7" />
-    </svg>
-  );
-}
-
-// ─── Payment badges ───────────────────────────────────────────────────────
-
-const PAYMENTS: Array<{ label: string; glyph: (props: { className?: string }) => ReactNode }> = [
-  { label: "Yape", glyph: YapeGlyph },
-  { label: "MercadoPago", glyph: MercadoPagoGlyph },
-  { label: "Visa", glyph: VisaGlyph },
-  { label: "Mastercard", glyph: MastercardGlyph },
-  { label: "Efectivo", glyph: CashGlyph },
-];
+// ─── Payment processor (MercadoPago oficial) ──────────────────────────────
+//
+// Solo MercadoPago — Yape/Visa/Mastercard/Efectivo se canalizan vía MP, así
+// que mostramos a quién le confiamos el procesamiento. Sin badges, sin
+// pills: eyebrow + logo limpio, premium minimal.
 
 function PaymentBadges() {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-3.5">
       <span className="text-[9.5px] font-semibold uppercase tracking-[0.28em] text-[#0A0A0A]/45">
-        Pagos
+        Pagos procesados por
       </span>
-      <ul className="flex flex-wrap items-center gap-1.5">
-        {PAYMENTS.map(({ label, glyph: Glyph }) => (
-          <li
-            key={label}
-            className={cn(
-              "inline-flex h-7 items-center gap-1 rounded-md border border-[#11111110] bg-white px-2",
-              "text-[10px] font-medium tracking-tight text-[#0A0A0A]/75",
-            )}
-            aria-label={label}
-          >
-            <Glyph className="h-3 w-auto" />
-            <span>{label}</span>
-          </li>
-        ))}
-      </ul>
+      {/* Branding horizontal oficial de Mercado Pago (lockup icono + texto).
+          width/height hints REFLEJAN el aspect ratio real del SVG
+          (viewBox 1048.82 × 425.2 ≈ 2.47:1). Sizing por ancho:
+          `w-26 sm:w-34 h-auto` → ~104 px mobile / ~136 px desktop. Punto
+          medio elegante: visible y reconocible sin protagonizar. */}
+      <Image
+        src="/footer/mp-oficial.svg"
+        alt="Mercado Pago"
+        width={210}
+        height={85}
+        className="h-auto w-26 sm:w-34"
+      />
     </div>
-  );
-}
-
-/** Yape — "Y" estilizado. Visual abstracto (sin replicar logo oficial). */
-function YapeGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 12"
-      fill="none"
-      className={className}
-      aria-hidden
-    >
-      <path
-        d="M3 2 L7 6 L11 2 M7 6 L7 10"
-        stroke="#7C0CD8"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/** MercadoPago — círculo con curva (handshake stylized). */
-function MercadoPagoGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 12" fill="none" className={className} aria-hidden>
-      <ellipse cx="12" cy="6" rx="9" ry="4" fill="#00B1EA" />
-      <path
-        d="M7 6.5c1.5-1.5 4-1.5 5 0s3 0 4-1"
-        stroke="#fff"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
-  );
-}
-
-/** Visa — wordmark abstracto monochrome. */
-function VisaGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 12" fill="none" className={className} aria-hidden>
-      <rect width="24" height="12" rx="2" fill="#1A1F71" />
-      <text
-        x="12"
-        y="8.5"
-        textAnchor="middle"
-        fontFamily="system-ui, sans-serif"
-        fontSize="6"
-        fontWeight="800"
-        fill="#fff"
-        letterSpacing="0.4"
-      >
-        VISA
-      </text>
-    </svg>
-  );
-}
-
-/** Mastercard — dos círculos solapados (clásico). */
-function MastercardGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 12" fill="none" className={className} aria-hidden>
-      <circle cx="9" cy="6" r="4" fill="#EB001B" />
-      <circle cx="15" cy="6" r="4" fill="#F79E1B" />
-      <path
-        d="M12 3.2a4 4 0 0 0 0 5.6 4 4 0 0 0 0-5.6Z"
-        fill="#FF5F00"
-      />
-    </svg>
-  );
-}
-
-/** Efectivo — billete simplificado. */
-function CashGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 12" fill="none" className={className} aria-hidden>
-      <rect x="2" y="2" width="20" height="8" rx="1.5" fill="#1F8B4C" />
-      <circle cx="12" cy="6" r="1.8" fill="none" stroke="#fff" strokeWidth="0.9" />
-      <circle cx="5.5" cy="6" r="0.6" fill="#fff" />
-      <circle cx="18.5" cy="6" r="0.6" fill="#fff" />
-    </svg>
   );
 }
 
@@ -439,7 +326,7 @@ function AgenciaCredit() {
   return (
     <p className="inline-flex items-center gap-1.5 text-[11px] text-[#0A0A0A]/45">
       <span className="text-[9px] font-medium uppercase tracking-[0.32em] text-[#0A0A0A]/35">
-        Hecho por
+        Desarrollado por
       </span>
       <a
         href="https://www.agencia-jdev.com"

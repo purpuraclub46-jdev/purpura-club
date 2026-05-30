@@ -19,6 +19,7 @@ import { forwardRef, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { cn } from "@/shared/lib/cn";
+import { useMediaQuery } from "@/shared/lib/use-media-query";
 import { extractErrorMessage } from "@/services/http/client";
 import { useAuth, useLogin, useLogout } from "@/features/auth/hooks/use-auth";
 import { toast } from "@/stores/toast.store";
@@ -49,6 +50,10 @@ export function UserMenu() {
   const router = useRouter();
   const { user, isAuthenticated } = useAuth();
   const logout = useLogout();
+  // En mobile el modal/sheet se reemplaza por navegación full-screen
+  // (/login si no hay sesión, /mi-cuenta si la hay). Desktop conserva el
+  // dropdown floating actual para login rápido sin cambiar de página.
+  const isLg = useMediaQuery("(min-width: 1024px)");
 
   // Close on outside click + Escape.
   useEffect(() => {
@@ -74,18 +79,8 @@ export function UserMenu() {
     };
   }, [open, closeMenu]);
 
-  // Lock body scroll cuando el sheet está abierto en mobile.
-  useEffect(() => {
-    if (!open) return;
-    const isMobile =
-      typeof window !== "undefined" && window.innerWidth < 1024;
-    if (!isMobile) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = original;
-    };
-  }, [open]);
+  // Body scroll lock eliminado: la experiencia mobile ya no usa sheet
+  // (migrada a /login full-screen) y el dropdown desktop no requiere lock.
 
   const handleLogout = async () => {
     closeMenu();
@@ -93,14 +88,32 @@ export function UserMenu() {
     router.replace("/");
   };
 
+  /**
+   * Trigger principal del header. Desktop conserva el toggle del dropdown
+   * (login express sin abandonar la página actual). Mobile salta a la
+   * ruta full-screen correspondiente (/login o /mi-cuenta) — sin modal,
+   * sin sheet.
+   */
+  const handleTrigger = () => {
+    if (isLg) {
+      toggleMenu();
+      return;
+    }
+    if (isAuthenticated) {
+      router.push("/mi-cuenta");
+    } else {
+      router.push("/login");
+    }
+  };
+
   return (
     <div className="relative">
       <button
         ref={triggerRef}
         type="button"
-        onClick={toggleMenu}
-        aria-expanded={open}
-        aria-haspopup="dialog"
+        onClick={handleTrigger}
+        aria-expanded={isLg ? open : undefined}
+        aria-haspopup={isLg ? "dialog" : undefined}
         aria-label={
           isAuthenticated ? `Cuenta de ${user?.firstName}` : "Iniciar sesión"
         }
@@ -120,20 +133,15 @@ export function UserMenu() {
         )}
       </button>
 
+      {/*
+        El panel SOLO renderiza en desktop (`isLg`). En mobile la experiencia
+        auth se entrega como página full-screen (/login, /mi-cuenta) — no
+        hay modal/sheet aunque alguna surface llame `openLogin()` con
+        herencia. Esto evita regresiones si quedan callers antiguos.
+      */}
       <AnimatePresence>
-        {open ? (
+        {open && isLg ? (
           <>
-            {/* Backdrop — solo mobile. En desktop el click-outside basta. */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              onClick={closeMenu}
-              className="fixed inset-0 z-40 bg-[#0A0A0A]/45 backdrop-blur-[2px] lg:hidden"
-              aria-hidden
-            />
-
             <motion.div
               ref={panelRef}
               role="dialog"
@@ -146,11 +154,7 @@ export function UserMenu() {
               exit={{ opacity: 0, y: 24 }}
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className={cn(
-                "z-50 overflow-hidden bg-white shadow-[0_24px_60px_-24px_rgba(17,17,17,0.22)] ring-1 ring-black/5",
-                // Mobile: bottom sheet con márgenes laterales luxury.
-                "fixed inset-x-3 bottom-3 rounded-3xl",
-                // Desktop: floating panel anclado al trigger, ancho fijo.
-                "lg:absolute lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-[calc(100%+12px)] lg:w-85 lg:origin-top-right",
+                "absolute right-0 top-[calc(100%+12px)] z-50 w-85 origin-top-right overflow-hidden rounded-3xl bg-white shadow-[0_24px_60px_-24px_rgba(17,17,17,0.22)] ring-1 ring-black/5",
               )}
             >
               {isAuthenticated && user ? (

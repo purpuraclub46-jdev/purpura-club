@@ -13,7 +13,7 @@ export default function LoginPage() {
         {/* Header marca arriba-izquierda */}
         <header className="relative z-10 flex items-center gap-3 p-10 xl:p-12">
           <Image
-            src="/images/isotipo.svg"
+            src="/brand/isotipo-nuevo.svg"
             alt=""
             width={36}
             height={36}
@@ -50,7 +50,7 @@ export default function LoginPage() {
         {/* Header marca en mobile (cuando el panel luxury está oculto) */}
         <div className="flex items-center gap-3 lg:hidden">
           <Image
-            src="/images/isotipo.svg"
+            src="/brand/isotipo-nuevo.svg"
             alt=""
             width={36}
             height={36}

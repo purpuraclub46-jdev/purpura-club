@@ -26,7 +26,6 @@ import {
 } from "@/features/account/hooks/use-account";
 import { useAuth, useLogout } from "@/features/auth/hooks/use-auth";
 import { useMyRaffleEntries } from "@/features/raffles/hooks/use-raffles";
-import { useUserMenuStore } from "@/stores/user-menu.store";
 import {
   ORDER_STATUS_LABEL,
   RAFFLE_ENTRY_STATUS_LABEL,
@@ -55,7 +54,6 @@ export default function MiCuentaPage() {
   const searchParams = useSearchParams();
   const { user, isAuthenticated, hydrated } = useAuth();
   const logout = useLogout();
-  const openLogin = useUserMenuStore((s) => s.open);
   // Tab inicial sale de `?tab=` para soportar deep-linking desde el header
   // (UserMenu) hacia "Pedidos" / "Sorteos" sin romper la navegación interna.
   const [tab, setTab] = useState<Tab>(() =>
@@ -68,14 +66,13 @@ export default function MiCuentaPage() {
     setTab((current) => (current === next ? current : next));
   }, [searchParams]);
 
-  // Sin sesión → home + abrir UserMenu (único login oficial).
-  // El header maneja el render del panel; aquí solo signaleamos el intent.
+  // Sin sesión → redirigir a /login full-screen con `?next=/mi-cuenta`
+  // para volver acá automáticamente tras autenticarse.
   useEffect(() => {
     if (hydrated && !isAuthenticated) {
-      router.replace("/");
-      openLogin();
+      router.replace("/login?next=/mi-cuenta");
     }
-  }, [hydrated, isAuthenticated, router, openLogin]);
+  }, [hydrated, isAuthenticated, router]);
 
   if (!hydrated || !user) {
     return (

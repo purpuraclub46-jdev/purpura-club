@@ -149,12 +149,12 @@ export function MobileSidebar() {
       >
         <div className="flex h-16 items-center justify-between border-b border-[#11111111] px-4">
           <Image
-            src="/images/logotipo.svg"
+            src="/brand/logotipo-nuevo-1.svg"
             alt="Purpura Club"
-            width={160}
-            height={32}
+            width={213}
+            height={80}
             priority
-            className="h-7 w-auto"
+            className="h-8 w-auto"
           />
           <button
             type="button"

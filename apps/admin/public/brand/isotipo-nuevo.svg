@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- PÚRPURA.CLUB - Isotipo Orgánica -->
+  <!-- Marca Registrada 2026 -->
+
+  <!-- Ojo superior orgánico -->
+  <ellipse cx="130" cy="160" rx="20" ry="24" fill="#9810FA" transform="rotate(-5 130 160)"/>
+
+  <!-- Ojo inferior orgánico -->
+  <ellipse cx="130" cy="215" rx="20" ry="24" fill="#9810FA" transform="rotate(8 130 215)"/>
+
+  <!-- P orgánica - Stem vertical redondeado -->
+  <rect x="175" y="140" width="16" height="130" rx="8" fill="#9810FA"/>
+
+  <!-- P orgánica - Loop superior -->
+  <path d="M 183 140 C 183 140 183 135 190 135 L 250 135 C 265 135 270 145 270 162 C 270 179 265 189 250 189 L 190 189 C 183 189 183 184 183 184"
+        fill="none" stroke="#9810FA" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

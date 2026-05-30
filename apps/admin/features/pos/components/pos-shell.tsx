@@ -165,12 +165,12 @@ function PosTopBar({
       <div className="flex items-center gap-4">
         <Link href="/pos" aria-label="Purpura POS" className="flex items-center">
           <Image
-            src="/images/logotipo.svg"
+            src="/brand/logotipo-nuevo-1.svg"
             alt="Purpura Club"
-            width={160}
-            height={32}
+            width={240}
+            height={90}
             priority
-            className="h-7 w-auto"
+            className="h-9 w-auto"
           />
         </Link>
 

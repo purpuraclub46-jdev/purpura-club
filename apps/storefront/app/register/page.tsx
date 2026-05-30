@@ -24,7 +24,6 @@ import { Input } from "@/shared/ui/input";
 import { extractErrorMessage } from "@/services/http/client";
 import { useRegister } from "@/features/auth/hooks/use-auth";
 import { toast } from "@/stores/toast.store";
-import { useUserMenuStore } from "@/stores/user-menu.store";
 
 /**
  * REGISTER PAGE · luxury ecommerce reference (light edition)
@@ -36,8 +35,8 @@ import { useUserMenuStore } from "@/stores/user-menu.store";
  *   · Backdrop: editorial light (gradient gris→blanco reinterpretado con
  *     glows púrpura ultra sutiles + grain) — Apple / Aesop / Cartier modern.
  *
- * El "¿Ya tienes cuenta? Inicia sesión" abre el UserMenu del header vía
- * `useUserMenuStore` para mantener UN SOLO login oficial.
+ * El "¿Ya tienes cuenta? Inicia sesión" navega a /login (página
+ * full-screen dedicada) — la experiencia auth ya no usa modales.
  */
 
 const passwordRule = z
@@ -86,7 +85,6 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 export default function RegisterPage() {
   const router = useRouter();
   const reg = useRegister();
-  const openLogin = useUserMenuStore((s) => s.open);
   const [showPassword, setShowPassword] = useState(false);
 
   const {
@@ -123,7 +121,7 @@ export default function RegisterPage() {
           >
             <Link href="/" className="inline-flex items-center gap-2.5">
               <Image
-                src="/images/isotipo.svg"
+                src="/brand/isotipo-nuevo.svg"
                 alt="Purpura Club"
                 width={40}
                 height={40}
@@ -131,11 +129,11 @@ export default function RegisterPage() {
                 priority
               />
               <Image
-                src="/images/logotipo.svg"
+                src="/brand/logotipo-nuevo-1.svg"
                 alt="Purpura Club"
-                width={140}
-                height={24}
-                className="h-5 w-auto"
+                width={213}
+                height={80}
+                className="h-8 w-auto"
                 priority
               />
             </Link>
@@ -233,7 +231,7 @@ export default function RegisterPage() {
 
           <div className="space-y-2">
             <Image
-              src="/images/isotipo.svg"
+              src="/brand/isotipo-nuevo.svg"
               alt="Purpura Club"
               width={48}
               height={48}
@@ -343,19 +341,17 @@ export default function RegisterPage() {
           </form>
 
           {/*
-            "¿Ya tienes cuenta?" — abre el UserMenu del header (login oficial
-            único). NO navega a una ruta /login duplicada. El store maneja
-            el toggle visual; el header renderiza el panel.
+            "¿Ya tienes cuenta?" — navega a /login full-screen. La
+            experiencia auth vive 100% en páginas dedicadas (no modales).
           */}
           <div className="border-t border-[#11111110] pt-4 text-center text-[12px] text-[#0A0A0A]/55">
             ¿Ya tienes cuenta?{" "}
-            <button
-              type="button"
-              onClick={openLogin}
+            <Link
+              href="/login"
               className="font-medium text-[#9810FA] underline-offset-4 transition-all duration-200 hover:underline"
             >
               Inicia sesión
-            </button>
+            </Link>
           </div>
         </motion.div>
       </section>

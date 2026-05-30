@@ -21,6 +21,10 @@ export interface RegisterPayload {
   lastName: string;
 }
 
+export interface ForgotPasswordPayload {
+  email: string;
+}
+
 export const authApi = {
   login: async (payload: LoginPayload): Promise<AuthResponsePayload> => {
     const { data } = await httpClient.post<ApiResponse<AuthResponsePayload>>(
@@ -45,5 +49,9 @@ export const authApi = {
 
   logout: async (): Promise<void> => {
     await httpClient.post("/auth/logout");
+  },
+
+  forgotPassword: async (payload: ForgotPasswordPayload): Promise<void> => {
+    await httpClient.post("/auth/forgot-password", payload);
   },
 };

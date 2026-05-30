@@ -2,7 +2,14 @@
 
 import { Suspense, useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight, Filter, ShoppingBag, SlidersHorizontal } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  ShoppingBag,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Container } from "@/shared/ui/container";
 import { EmptyState } from "@/shared/ui/empty-state";
@@ -162,17 +169,39 @@ function ShopContent() {
   const ancestors = breadcrumb.slice(0, -1);
 
   const hasAnyFilter = Boolean(mostSpecific) || searchUrl.length > 0;
-  const showCount = !isLoading && data !== undefined;
+  const pageTitle = mostSpecific?.name ?? "Todos los productos";
 
   return (
     <div className="bg-white pb-16">
-      {/* ─── HERO contextual ─────────────────────────────────────────── */}
-      <section className="lux-aurora border-b border-[#11111108]">
-        <Container className="py-10 sm:py-14">
+      {/*
+        H1 semántico oculto visualmente — preserva SEO, structured data y
+        screen readers sin ocupar viewport. Eliminamos el hero completo
+        (eyebrow TIENDA, título serif gigante, contador, decoración
+        lux-aurora) para que los productos aparezcan above-the-fold tanto
+        en mobile como en desktop. El nombre de categoría sigue visible
+        de forma contextual en breadcrumb del toolbar + chips activas +
+        sidebar contextual + browser tab metadata.
+      */}
+      <h1 className="sr-only">{pageTitle}</h1>
+
+      {/*
+        TOOLBAR sticky: breadcrumb (cuando aplica) + sort + filter mobile
+        + chips de subcategoría + chips de leaf. Es lo PRIMERO que ve el
+        usuario después del navbar — productos quedan inmediatamente
+        accesibles tras scroll mínimo.
+        Sticky `top-20 sm:top-24` para que se ancle DEBAJO del navbar
+        (h-20 mobile, h-24 sm+). Antes el top-0 lo dejaba oculto detrás
+        del navbar z-40 al hacer scroll.
+        Sin input de búsqueda — el único editor de `?search=` vive en el
+        header (SearchCommand). Mantener dos inputs duplicaba estado,
+        debounce, handlers y rompía el flujo luxury Apple/Zara.
+      */}
+      <section className="sticky top-20 z-30 border-b border-[#11111108] bg-white/85 backdrop-blur-md sm:top-24">
+        <Container className="py-3 sm:py-4">
           {ancestors.length > 0 ? (
             <nav
               aria-label="Migas de pan"
-              className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] uppercase tracking-[0.22em] text-[#0A0A0A]/50"
+              className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] uppercase tracking-[0.22em] text-[#0A0A0A]/50"
             >
               <button
                 onClick={() => handleSelectRoot(null)}
@@ -182,7 +211,7 @@ function ShopContent() {
               </button>
               {ancestors.map((node, idx) => (
                 <span key={node.id} className="flex items-center gap-x-1.5">
-                  <ChevronRight className="size-3 text-[#0A0A0A]/30" />
+                  <ChevronRight className="size-2.5 text-[#0A0A0A]/30" />
                   <button
                     onClick={() => {
                       if (idx === 0) handleSelectRoot(node);
@@ -194,44 +223,13 @@ function ShopContent() {
                   </button>
                 </span>
               ))}
+              <ChevronRight className="size-2.5 text-[#0A0A0A]/30" />
+              <span className="text-[#0A0A0A]/75">
+                {mostSpecific?.name}
+              </span>
             </nav>
-          ) : (
-            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.28em] text-[#9810FA]">
-              Tienda
-            </p>
-          )}
-
-          <h1 className="animate-fade-up font-serif text-4xl tracking-tight text-[#0A0A0A] sm:text-5xl">
-            {mostSpecific?.name ?? "Todos los Productos"}
-          </h1>
-
-          {showCount ? (
-            <p className="mt-2 text-sm text-[#0A0A0A]/55">
-              {totalResults === 0
-                ? "Sin productos por ahora"
-                : totalResults === 1
-                  ? "1 producto"
-                  : `${totalResults} productos`}
-              {searchUrl ? (
-                <>
-                  {" · "}
-                  <span>
-                    para{" "}
-                    <span className="text-[#0A0A0A]/75">«{searchUrl}»</span>
-                  </span>
-                </>
-              ) : null}
-            </p>
           ) : null}
-        </Container>
-      </section>
 
-      {/* ─── TOOLBAR sticky: sort + filter mobile + chips de subcategoría ─── */}
-      {/* Sin input de búsqueda — el único editor de `?search=` vive en el
-          header (SearchCommand). Mantener dos inputs duplicaba estado,
-          debounce, handlers y rompía el flujo luxury Apple/Zara. */}
-      <section className="sticky top-0 z-30 border-b border-[#11111108] bg-white/80 backdrop-blur-md">
-        <Container className="py-3 sm:py-4">
           <div className="flex items-center justify-end gap-2">
             <select
               value={sort}
@@ -257,39 +255,64 @@ function ShopContent() {
             </Button>
           </div>
 
-          {/* Sub chips (depth 1) — solo si hay root activo */}
+          {/*
+            Sub nav — MOBILE-ONLY (sm:hidden). Eyebrow del root + selector
+            nativo premium con picker iOS/Android. En desktop esta
+            navegación se centraliza en el `ContextualSidebar` lateral —
+            evitando duplicación de chips superpuestos a la sidebar.
+          */}
           {activeRoot && activeRoot.children.length > 0 ? (
-            <div className="mt-3 -mx-4 flex gap-2 overflow-x-auto px-4 hide-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
-              <CategoryPill
-                active={!activeSub}
-                onClick={() => handleSelectSub(null)}
-                tone="dark"
-              >
-                Todo {activeRoot.name}
-              </CategoryPill>
-              {activeRoot.children.map((sub) => (
-                <CategoryPill
-                  key={sub.id}
-                  active={activeSub?.id === sub.id}
-                  onClick={() => handleSelectSub(sub)}
-                  tone="brand"
+            <div className="mt-3 sm:hidden">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#0A0A0A]/55">
+                {activeRoot.name}
+              </p>
+              <div className="relative mt-2">
+                <select
+                  aria-label={`Subcategoría de ${activeRoot.name}`}
+                  value={activeSub?.slug ?? ""}
+                  onChange={(e) => {
+                    const slug = e.target.value;
+                    if (!slug) {
+                      handleSelectSub(null);
+                      return;
+                    }
+                    const sub = activeRoot.children.find(
+                      (s) => s.slug === slug,
+                    );
+                    if (sub) handleSelectSub(sub);
+                  }}
+                  className="h-12 w-full appearance-none rounded-xl border border-[#11111118] bg-white pl-4 pr-10 text-[14.5px] font-medium tracking-tight text-[#0A0A0A] transition-all duration-200 focus:border-[#9810FA] focus:outline-none focus:ring-4 focus:ring-[#9810FA]/12"
                 >
-                  {sub.name}
-                </CategoryPill>
-              ))}
+                  <option value="">Todo {activeRoot.name}</option>
+                  {activeRoot.children.map((sub) => (
+                    <option key={sub.id} value={sub.slug}>
+                      {sub.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  aria-hidden
+                  className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#0A0A0A]/55"
+                  strokeWidth={1.6}
+                />
+              </div>
             </div>
           ) : null}
 
-          {/* Leaf chips (depth 2) — solo si hay sub activo con hijos */}
+          {/*
+            Leaf chips — MOBILE-ONLY (sm:hidden). En desktop la sidebar
+            contextual auto-expande las leafs del sub activo (`SubBranch`)
+            cumpliendo la misma función sin chips duplicados.
+          */}
           {activeSub && activeSub.children.length > 0 ? (
-            <div className="mt-2 -mx-4 flex gap-1.5 overflow-x-auto px-4 hide-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
+            <div className="mt-2 -mx-4 flex gap-1.5 overflow-x-auto px-4 hide-scrollbar sm:hidden">
               <CategoryPill
                 active={!activeLeaf}
                 onClick={() => handleSelectLeaf(null)}
                 tone="dark"
                 size="sm"
               >
-                Todo {activeSub.name}
+                Todo
               </CategoryPill>
               {activeSub.children.map((leaf) => (
                 <CategoryPill

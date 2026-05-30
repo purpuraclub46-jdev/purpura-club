@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="400" viewBox="0 0 800 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- PÚRPURA.CLUB - Logotipo Principal -->
+  <!-- Marca Registrada 2026 -->
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500&amp;display=swap');
+    .brand-text {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 500;
+    }
+  </style>
+
+  <!-- PÚRPURA -->
+  <text x="400" y="180" class="brand-text" font-size="96" fill="#0A0A0A" text-anchor="middle" letter-spacing="19.2">PÚRPURA</text>
+
+  <!-- CLUB -->
+  <text x="400" y="270" class="brand-text" font-size="64" fill="#0A0A0A" text-anchor="middle" letter-spacing="12.8">CLUB</text>
+</svg>

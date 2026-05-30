@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/shared/lib/cn";
 import { useMediaQuery } from "@/shared/lib/use-media-query";
 import { useCategories } from "@/features/catalog/hooks/use-catalog";
@@ -116,19 +117,21 @@ export function Navbar() {
   }, [pathname]);
 
   // Si el viewport cambia mientras el overlay está abierto, lo cerramos —
-  // así nunca queda colgado un sheet móvil en desktop ni viceversa.
+  // así nunca queda colgado un sheet móvil en desktop ni viceversa. El
+  // mobileOpen también se cierra para liberar el scroll lock del drawer
+  // — sin esto, redimensionar a lg+ deja la página bloqueada sin botón
+  // visible para cerrar el drawer (`lg:hidden`).
   useEffect(() => {
     setSearchOpen(false);
+    if (isLg) setMobileOpen(false);
   }, [isLg]);
 
-  useEffect(() => {
-    if (!mobileOpen) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = original;
-    };
-  }, [mobileOpen]);
+  // Scroll lock del body: vive en el `MobileDrawer` (patrón position:
+  // fixed + top: -scrollY) — robusto para iOS Safari y restaura posición
+  // exacta al cerrar. Tener dos locks compitiendo por `body.style.overflow`
+  // provocaba un leak: el cleanup del lock externo capturaba "hidden"
+  // (seteado antes por el lock interno) y restauraba a "hidden" tras cerrar,
+  // dejando la página bloqueada hasta el siguiente ciclo open/close.
 
   const isLinkActive = (link: NavLink): boolean => {
     if (link.href === "/") return pathname === "/";
@@ -151,14 +154,14 @@ export function Navbar() {
           : "border-transparent bg-white",
       )}
     >
-      <div className="mx-auto flex h-20 max-w-7xl items-center gap-6 px-5 sm:h-24 sm:px-8">
+      <div className="relative mx-auto flex h-20 max-w-7xl items-center gap-6 px-5 sm:h-24 sm:px-8">
         {/*
           En mobile, cuando searchOpen=true, hamburger + icons se colapsan
           (display:none) para liberar la fila completa al input. Sin fade
           porque a 360px no hay espacio para mantenerlos ocupando layout
-          mientras el input crece. Logo + branding permanecen visibles
-          (requisito UX). Desktop no se ve afectado: hamburger ya es
-          `lg:hidden` y los icons siempre visibles allí.
+          mientras el input crece. El logo centrado también se oculta para
+          que el search tome la fila entera. Desktop no se ve afectado:
+          hamburger es `lg:hidden` y los icons siempre visibles allí.
         */}
         <button
           onClick={() => setMobileOpen(true)}
@@ -171,26 +174,55 @@ export function Navbar() {
           <Menu className="size-5" strokeWidth={1.4} />
         </button>
 
+        {/*
+          Logo desktop (lg+) — flujo normal flex con isotipo + logotipo
+          horizontal. Layout idéntico al anterior.
+        */}
         <Link
           href="/"
-          className="flex shrink-0 items-center gap-3 transition-opacity hover:opacity-90"
+          className="hidden shrink-0 items-center gap-3 transition-opacity hover:opacity-90 lg:flex"
           aria-label="Ir al inicio · Purpura Club"
         >
           <Image
-            src="/brand/isotipo.svg"
+            src="/brand/isotipo-nuevo.svg"
             alt=""
             aria-hidden
             width={48}
             height={48}
-            className="size-9 sm:size-10"
+            className="size-10"
             priority
           />
           <Image
-            src="/brand/logotipo.svg"
+            src="/brand/logotipo-nuevo-1.svg"
             alt="Purpura Club"
-            width={180}
-            height={36}
-            className="hidden h-7 w-auto sm:block lg:h-8"
+            width={240}
+            height={90}
+            className="h-9 w-auto lg:h-10"
+            priority
+          />
+        </Link>
+
+        {/*
+          Logo mobile (<lg) — posicionado absoluto en el eje central del
+          header para garantizar centrado matemático REAL (independiente
+          del ancho del bloque izq vs der). Solo logotipo horizontal,
+          tamaño protagonico (h-9). Se oculta cuando searchOpen para
+          ceder la fila al input.
+        */}
+        <Link
+          href="/"
+          aria-label="Ir al inicio · Purpura Club"
+          className={cn(
+            "absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity hover:opacity-90 lg:hidden",
+            searchOpen && !isLg && "hidden",
+          )}
+        >
+          <Image
+            src="/brand/logotipo-nuevo-1.svg"
+            alt="Purpura Club"
+            width={240}
+            height={90}
+            className="h-11 w-auto"
             priority
           />
         </Link>
@@ -276,6 +308,14 @@ export function Navbar() {
           </div>
         </div>
 
+        {/*
+          Acciones derecha. En mobile mostramos SOLO Mi cuenta + Carrito —
+          el header gana protagonismo para el logotipo central. Search y
+          Wishlist se ocultan en mobile (`hidden lg:inline-flex`) y viven
+          dentro del drawer mobile como accesos editoriales con icono +
+          label. La funcionalidad se reutiliza vía los mismos callbacks
+          (openSearch, openWishlist) — no se duplica lógica ni estado.
+        */}
         <div
           className={cn(
             "ml-auto items-center gap-1 lg:flex lg:gap-1.5",
@@ -288,7 +328,7 @@ export function Navbar() {
             aria-label={searchOpen ? "Cerrar búsqueda" : "Buscar productos"}
             aria-expanded={searchOpen}
             className={cn(
-              "inline-flex size-10 items-center justify-center rounded-full text-[#0A0A0A] transition-colors hover:bg-[#11111108]",
+              "hidden size-10 items-center justify-center rounded-full text-[#0A0A0A] transition-colors hover:bg-[#11111108] lg:inline-flex",
               searchOpen && isLg && "bg-[#9810FA]/10 text-[#9810FA]",
             )}
           >
@@ -296,7 +336,7 @@ export function Navbar() {
           </button>
           <button
             onClick={openWishlist}
-            className="relative inline-flex size-10 items-center justify-center rounded-full text-[#0A0A0A] transition-colors hover:bg-[#11111108]"
+            className="relative hidden size-10 items-center justify-center rounded-full text-[#0A0A0A] transition-colors hover:bg-[#11111108] lg:inline-flex"
             aria-label="Abrir favoritos"
           >
             <Heart className="size-5" strokeWidth={1.4} />
@@ -327,6 +367,9 @@ export function Navbar() {
       <MobileDrawer
         open={mobileOpen}
         onClose={() => setMobileOpen(false)}
+        onSearch={openSearch}
+        onWishlist={openWishlist}
+        wishlistCount={wishlistCount}
         links={links}
         isActive={isLinkActive}
       />
@@ -337,12 +380,94 @@ export function Navbar() {
 interface MobileDrawerProps {
   open: boolean;
   onClose: () => void;
+  /** Abre el SearchCommand que vive en el slot mobile del navbar. */
+  onSearch: () => void;
+  /** Abre el wishlist drawer (Zustand store). */
+  onWishlist: () => void;
+  wishlistCount: number;
   links: readonly NavLink[];
   isActive: (link: NavLink) => boolean;
 }
 
-function MobileDrawer({ open, onClose, links, isActive }: MobileDrawerProps) {
-  return (
+/**
+ * Duración exit del drawer (debe coincidir con `transition` del aside).
+ * Usado para esperar a que el drawer salga antes de disparar acciones
+ * secundarias (search/wishlist), evitando solapar paneles superpuestos.
+ */
+const DRAWER_EXIT_MS = 280;
+
+function MobileDrawer({
+  open,
+  onClose,
+  onSearch,
+  onWishlist,
+  wishlistCount,
+  links,
+  isActive,
+}: MobileDrawerProps) {
+  /**
+   * SSR-safe portal mount. Renderizamos en `document.body` para escapar
+   * del containing block que crea el navbar (`backdrop-filter: blur(...)`
+   * cuando `scrolled=true`) — sin esto, el `fixed inset-0` del drawer se
+   * resuelve relativo al padding box del header en lugar del viewport,
+   * provocando que el drawer "aparezca" desplazado tras hacer scroll.
+   *
+   * Spec referida: CSS Containing Block — un ancestor con `backdrop-
+   * filter !== none` se convierte en containing block de descendientes
+   * `position: fixed`. Portal es la cura canónica.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  /**
+   * Body scroll lock con preservación de posición. Usamos el patrón
+   * `position: fixed + top: -scrollY` porque `overflow: hidden` no
+   * impide el rubber-band en iOS Safari. Al cerrar restauramos los
+   * estilos originales y disparamos `scrollTo(0, scrollY)` para volver
+   * a la posición exacta que tenía el usuario.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const original = {
+      position: body.style.position,
+      top: body.style.top,
+      width: body.style.width,
+      overflow: body.style.overflow,
+    };
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+    return () => {
+      body.style.position = original.position;
+      body.style.top = original.top;
+      body.style.width = original.width;
+      body.style.overflow = original.overflow;
+      // Restauramos scroll después de quitar `position: fixed`, en el
+      // mismo tick — sin esto, body vuelve a top:0 antes de saltar al
+      // scrollY guardado y se percibe un flicker.
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+
+  /**
+   * Cierra el drawer y dispara la acción secundaria después del exit.
+   * El navbar (z-40) queda visualmente detrás del drawer (z-50) mientras
+   * éste sale; esperar al fin de la animación evita que el SearchCommand
+   * "aparezca" tapado por el drawer en su exit.
+   */
+  const closeThen = (next: () => void) => () => {
+    onClose();
+    window.setTimeout(next, DRAWER_EXIT_MS);
+  };
+
+  if (!mounted) return null;
+
+  return createPortal(
     <AnimatePresence>
       {open ? (
         <>
@@ -362,17 +487,22 @@ function MobileDrawer({ open, onClose, links, isActive }: MobileDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed inset-y-0 left-0 z-50 flex w-[88%] max-w-sm flex-col bg-white shadow-[0_0_40px_rgba(17,17,17,0.22)] lg:hidden"
+            className="fixed inset-y-0 left-0 z-50 flex h-dvh w-[88%] max-w-sm flex-col bg-white shadow-[0_0_40px_rgba(17,17,17,0.22)] lg:hidden"
           >
-            <header className="flex items-center justify-between border-b border-[#11111114] px-5 py-5">
+            {/*
+              Header editorial — más aire arriba/abajo, hairline más fino,
+              cierre ghost con opacity baja → fill sutil en hover. La marca
+              gana protagonismo gracias al spacing, no al tamaño.
+            */}
+            <header className="flex items-center justify-between border-b border-[#11111110] px-6 pt-7 pb-6">
               <Link
                 href="/"
                 onClick={onClose}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2.5 transition-opacity hover:opacity-90"
                 aria-label="Inicio Purpura Club"
               >
                 <Image
-                  src="/brand/isotipo.svg"
+                  src="/brand/isotipo-nuevo.svg"
                   alt=""
                   aria-hidden
                   width={36}
@@ -380,30 +510,36 @@ function MobileDrawer({ open, onClose, links, isActive }: MobileDrawerProps) {
                   className="size-9"
                 />
                 <Image
-                  src="/brand/logotipo.svg"
+                  src="/brand/logotipo-nuevo-1.svg"
                   alt="Purpura Club"
-                  width={140}
-                  height={28}
-                  className="h-6 w-auto"
+                  width={213}
+                  height={80}
+                  className="h-8 w-auto"
                 />
               </Link>
               <button
                 onClick={onClose}
                 aria-label="Cerrar"
-                className="rounded-full p-2 text-[#0A0A0A] hover:bg-[#11111108]"
+                className="-mr-1 inline-flex size-10 items-center justify-center rounded-full text-[#0A0A0A]/55 transition-colors duration-200 hover:bg-[#11111108] hover:text-[#0A0A0A]"
               >
                 <X className="size-5" strokeWidth={1.4} />
               </button>
             </header>
 
+            {/*
+              Body editorial — sin background fills, sin rounded pills, sin
+              arrows. Cada item es una línea tipográfica con hairline brand
+              como indicador activo (Dior / Aesop pattern). El icono `Crown`
+              persiste como acento de highlight (Sorteos).
+            */}
             <nav
-              className="flex-1 overflow-y-auto px-3 py-4"
+              className="flex-1 overflow-y-auto px-6 py-7"
               aria-label="Menú móvil"
             >
-              <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/45">
+              <p className="pb-4 text-[10px] font-semibold uppercase tracking-[0.32em] text-[#0A0A0A]/45">
                 Navegación
               </p>
-              <ul className="space-y-1">
+              <ul>
                 {links.map((link) => {
                   const active = isActive(link);
                   return (
@@ -411,63 +547,106 @@ function MobileDrawer({ open, onClose, links, isActive }: MobileDrawerProps) {
                       <Link
                         href={link.href}
                         onClick={onClose}
+                        aria-current={active ? "page" : undefined}
                         className={cn(
-                          "flex items-center justify-between rounded-xl px-3 py-3 text-sm font-medium transition-colors",
+                          "group/item flex items-center gap-3 py-3.5 text-[15px] font-medium tracking-tight transition-colors duration-300 ease-out",
                           active
-                            ? "bg-[#9810FA]/8 text-[#9810FA]"
-                            : "text-[#0A0A0A]/85 hover:bg-[#11111108]",
+                            ? "text-[#9810FA]"
+                            : "text-[#0A0A0A]/85 hover:text-[#9810FA]",
                         )}
                       >
-                        <span className="inline-flex items-center gap-2 uppercase tracking-[0.14em]">
-                          {link.highlight ? (
-                            <Crown className="size-3.5 text-[#9810FA]" />
-                          ) : null}
-                          {link.label}
+                        {/*
+                          Slot izquierdo de ancho fijo (w-4) — alinea el
+                          hairline de nav con el icono de atajos. Cero shift
+                          de layout al activar/desactivar (opacity-only).
+                        */}
+                        <span className="inline-flex w-4 shrink-0 justify-center">
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "inline-block h-px w-3 bg-[#9810FA] transition-opacity duration-300",
+                              active ? "opacity-100" : "opacity-0",
+                            )}
+                          />
                         </span>
-                        <span aria-hidden className="text-base">
-                          →
-                        </span>
+                        {link.highlight ? (
+                          <Crown
+                            className="size-3.5 shrink-0 text-[#9810FA]"
+                            strokeWidth={1.6}
+                          />
+                        ) : null}
+                        <span>{link.label}</span>
                       </Link>
                     </li>
                   );
                 })}
               </ul>
 
-              <div className="mt-6 space-y-1">
-                <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/45">
+              {/*
+                Atajos — misma tipografía y rhythm que la nav. El icono
+                izquierdo (Search/Heart) ocupa el mismo slot w-4 que el
+                hairline de nav, garantizando alineación vertical del label
+                entre secciones. Esto integra ambos bloques en una sola
+                experiencia editorial unificada (vs. parecer "extra" abajo).
+              */}
+              <div className="mt-10">
+                <p className="pb-4 text-[10px] font-semibold uppercase tracking-[0.32em] text-[#0A0A0A]/45">
                   Atajos
                 </p>
-                <Link
-                  href="/shop"
-                  onClick={onClose}
-                  className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-[#0A0A0A]/85 hover:bg-[#11111108]"
-                >
-                  <Search className="size-4 text-[#9810FA]" strokeWidth={1.4} />
-                  Buscar productos
-                </Link>
-                <Link
-                  href="/sorteos"
-                  onClick={onClose}
-                  className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-[#0A0A0A]/85 hover:bg-[#11111108]"
-                >
-                  <Crown className="size-4 text-[#9810FA]" strokeWidth={1.4} />
-                  Sorteos activos
-                </Link>
+                <ul>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={closeThen(onSearch)}
+                      className="group/item flex w-full items-center gap-3 py-3.5 text-left text-[15px] font-medium tracking-tight text-[#0A0A0A]/85 transition-colors duration-300 ease-out hover:text-[#9810FA]"
+                    >
+                      <span className="inline-flex w-4 shrink-0 justify-center">
+                        <Search
+                          className="size-4 text-[#9810FA]"
+                          strokeWidth={1.4}
+                        />
+                      </span>
+                      <span className="flex-1">Buscar</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={closeThen(onWishlist)}
+                      className="group/item flex w-full items-center gap-3 py-3.5 text-left text-[15px] font-medium tracking-tight text-[#0A0A0A]/85 transition-colors duration-300 ease-out hover:text-[#9810FA]"
+                    >
+                      <span className="inline-flex w-4 shrink-0 justify-center">
+                        <Heart
+                          className="size-4 text-[#9810FA]"
+                          strokeWidth={1.4}
+                        />
+                      </span>
+                      <span className="flex-1">Lista de deseos</span>
+                      {wishlistCount > 0 ? (
+                        <span
+                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#0A0A0A] px-1.5 text-[10px] font-semibold tabular-nums text-white"
+                          aria-label={`${wishlistCount} productos guardados`}
+                        >
+                          {wishlistCount > 9 ? "9+" : wishlistCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                </ul>
               </div>
             </nav>
 
-            <footer className="border-t border-[#11111114] bg-[#FAFAFA] px-5 py-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9810FA]">
-                Club Púrpura
-              </p>
-              <p className="mt-0.5 text-xs text-[#0A0A0A]/55">
-                Acumula puntos · Gana sorteos · Vive lujo retail.
-              </p>
-            </footer>
+            {/*
+              Footer eliminado por completo. Sin tagline promocional, sin
+              CTAs, sin banners — el drawer cierra en el ritmo editorial
+              propio de las listas, dejando aire abajo (overflow-y-auto del
+              nav reserva la altura restante).
+            */}
           </motion.aside>
         </>
       ) : null}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 
