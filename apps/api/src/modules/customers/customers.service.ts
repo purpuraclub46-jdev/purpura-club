@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   CustomerDocumentType,
   EntryStatus,
@@ -16,6 +17,7 @@ import {
   Paginated,
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
+import { APP_CONFIG_KEY, AppConfig } from '../../config/app.config';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { validateDocument } from '../fiscal/document-validators';
@@ -28,6 +30,11 @@ import {
   CustomerStatsDto,
 } from './dto/customer-response.dto';
 import { CustomerSearchDto } from './dto/customer-search.dto';
+import {
+  DedupeCandidateByDniDto,
+  DedupeCandidateByEmailDto,
+  DedupeCandidatesResponseDto,
+} from './dto/dedupe-candidates-response.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 
 const CUSTOMER_INCLUDE = Prisma.validator<Prisma.CustomerInclude>()({
@@ -41,11 +48,70 @@ type CustomerAggregate = Prisma.CustomerGetPayload<{
 
 const SUPER_ADMIN_SLUG = 'super_admin';
 
+// Cap para dedupe-candidates — evita respuestas excesivas en DBs grandes.
+const DEDUPE_CANDIDATES_CAP = 100;
+
 @Injectable()
 export class CustomersService {
   private readonly logger = new Logger(CustomersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /**
+   * FASE 1 / D5 — Lectura del feature flag CUSTOMER_AUTO_LINK_BY_DNI.
+   *
+   * Permite desactivar el auto-link sin redeploy si se detecta un
+   * problema operativo (ej. cajeros confundidos por linkeos silenciosos).
+   * Default: true.
+   */
+  private isAutoLinkByDniEnabled(): boolean {
+    const appConfig = this.configService.get<AppConfig>(APP_CONFIG_KEY);
+    return appConfig?.customerAutoLinkByDni ?? true;
+  }
+
+  /**
+   * FASE 1 / D5 — Audit trail estructurado para operaciones de
+   * vinculación Customer ↔ User.
+   *
+   * Emite un JSON line con el prefijo `[customer.audit]` para que
+   * sea ingestible por cualquier log aggregator (Datadog, Loki,
+   * CloudWatch). Campos: action, actorId, actorEmail, actorRole,
+   * customerId, userId, source, meta, timestamp.
+   *
+   * ROADMAP FASE 1.5 / FASE 2:
+   *   Promover a modelo persistente `CustomerLinkAuditLog` en
+   *   schema.prisma con campos {id, action, actorId, customerId,
+   *   userId, payload, createdAt}. Por ahora structured logging
+   *   cumple los requisitos de auditoría externa (decisión aprobada).
+   */
+  private emitAudit(event: {
+    action:
+      | 'customer.auto_link_by_dni'
+      | 'customer.manual_link'
+      | 'customer.dedupe_candidates_read';
+    actor: AuthenticatedUser;
+    customerId: string | null;
+    userId: string | null;
+    source: string;
+    meta?: Record<string, unknown>;
+  }): void {
+    const payload = {
+      audit: true,
+      action: event.action,
+      actorId: event.actor.id,
+      actorEmail: event.actor.email,
+      actorRole: event.actor.role,
+      customerId: event.customerId,
+      userId: event.userId,
+      source: event.source,
+      meta: event.meta ?? null,
+      timestamp: new Date().toISOString(),
+    };
+    this.logger.log(`[customer.audit] ${JSON.stringify(payload)}`);
+  }
 
   // ─── Read ──────────────────────────────────────────────────────────────
 
@@ -191,6 +257,41 @@ export class CustomersService {
     actor: AuthenticatedUser,
   ): Promise<CustomerResponseDto> {
     this.validateFiscalConsistency(dto);
+
+    // ─── FASE 1 / D5 — Auto-link por DNI ──────────────────────────────
+    //
+    // Si el admin/cajero está creando un Customer con DNI provisto y SIN
+    // userId explícito, buscamos un User huérfano (sin customerProfile)
+    // con mismo DNI. Si existe, auto-asignamos `dto.userId` antes de
+    // continuar — el resto del flujo (validate, create) lo procesa
+    // normalmente.
+    //
+    // Beneficio: cuando un walk-in capturado en POS hace tiempo se
+    // registró luego en ecommerce, este crear-Customer manual lo
+    // vincula a su cuenta sin requerir acción adicional del admin.
+    //
+    // Política aprobada FASE 0.5: SOLO match por DNI. NO email/phone.
+    // Feature flag CUSTOMER_AUTO_LINK_BY_DNI permite desactivar sin
+    // redeploy.
+    let autoLinkedUserId: string | null = null;
+    if (this.isAutoLinkByDniEnabled() && dto.dni && !dto.userId) {
+      const orphanUser = await this.prisma.user.findFirst({
+        where: { dni: dto.dni, customerProfile: null },
+        select: { id: true, email: true },
+      });
+      if (orphanUser) {
+        dto.userId = orphanUser.id;
+        // Si el dto no traía email pero el User sí, copiar — el User es
+        // source-of-truth para email de login. Si el dto sí trae email
+        // (admin lo capturó), respetamos esa decisión.
+        if (!dto.email && orphanUser.email) {
+          dto.email = orphanUser.email;
+        }
+        autoLinkedUserId = orphanUser.id;
+        // Audit emitido tras crear el Customer (para incluir customerId).
+      }
+    }
+
     await this.assertUniqueness({
       dni: dto.dni,
       ruc: dto.ruc,
@@ -243,10 +344,246 @@ export class CustomersService {
       this.logger.log(
         `Cliente creado ${created.id} (${created.fullName}) por ${actor.id}`,
       );
+
+      // FASE 1 / D5 — Audit trail si hubo auto-link por DNI.
+      if (autoLinkedUserId) {
+        this.emitAudit({
+          action: 'customer.auto_link_by_dni',
+          actor,
+          customerId: created.id,
+          userId: autoLinkedUserId,
+          source: 'customers.create',
+          meta: { dni: dto.dni },
+        });
+      }
+
       return this.toResponse(created, this.emptyStats());
     } catch (error) {
       throw this.translateUniqueConflict(error);
     }
+  }
+
+  // ─── FASE 1 / D5 — Vinculación manual Customer ↔ User ──────────────────
+
+  /**
+   * Vincula manualmente un Customer huérfano con un User existente.
+   *
+   * Solo accesible vía `POST /customers/:id/link-user` (guards en
+   * controller: customers.edit + users.view). Caso de uso: el admin
+   * descubre que un walk-in capturado en POS ya tenía cuenta ecommerce
+   * con mismo DNI.
+   *
+   * Validaciones (todas en una TX):
+   *   - Customer debe existir.
+   *   - Customer NO debe tener `userId` previo (no relinkar — sería
+   *     pisar la relación existente). Devuelve 409.
+   *   - User debe existir.
+   *   - User NO debe tener `customerProfile` previo (no robar Customer
+   *     del User). Devuelve 409.
+   *   - Si Customer Y User tienen DNI distintos → 409 (anti-typo).
+   *
+   * Audit trail: emite `customer.manual_link` con actorId/actorRole/
+   * customerId/userId/timestamp.
+   */
+  async linkUser(
+    customerId: string,
+    userId: string,
+    actor: AuthenticatedUser,
+  ): Promise<CustomerResponseDto> {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.findUnique({
+        where: { id: customerId },
+        include: CUSTOMER_INCLUDE,
+      });
+      if (!customer) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      // Scope de sucursal: el admin solo puede vincular Customers a los
+      // que tiene acceso. SUPER_ADMIN bypasses.
+      this.assertLocationAccess(customer.primaryLocationId, actor);
+
+      if (customer.userId) {
+        throw new ConflictException(
+          'Este cliente ya está vinculado a una cuenta',
+        );
+      }
+
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          dni: true,
+          customerProfile: { select: { id: true } },
+        },
+      });
+      if (!user) {
+        throw new NotFoundException('Usuario no encontrado');
+      }
+
+      if (user.customerProfile) {
+        throw new ConflictException(
+          'El usuario ya tiene un cliente asociado',
+        );
+      }
+
+      // Anti-typo: si ambos tienen DNI y difieren, bloquear.
+      if (customer.dni && user.dni && customer.dni !== user.dni) {
+        throw new ConflictException(
+          'Los DNIs del cliente y del usuario no coinciden',
+        );
+      }
+
+      const updated = await tx.customer.update({
+        where: { id: customerId },
+        data: {
+          userId: user.id,
+          // Fill defensive: si Customer no tenía DNI pero User sí, copiar.
+          // Mismo para email.
+          dni: customer.dni ?? user.dni ?? null,
+          email: customer.email ?? user.email ?? null,
+        },
+        include: CUSTOMER_INCLUDE,
+      });
+
+      return updated;
+    });
+
+    // Audit fuera de TX — el commit ya pasó, el evento refleja realidad.
+    this.emitAudit({
+      action: 'customer.manual_link',
+      actor,
+      customerId,
+      userId,
+      source: 'customers.linkUser',
+    });
+
+    const stats = await this.computeStats(result.id, result.userId);
+    return this.toResponse(result, stats);
+  }
+
+  // ─── FASE 1 / D5 — Dedupe candidates (SUPER_ADMIN) ─────────────────────
+
+  /**
+   * Lista candidatos a dedupe Customer ↔ User para gobierno de datos.
+   *
+   * SOLO SUPER_ADMIN (defense-in-depth: el guard del controller ya lo
+   * restringe, pero también verificamos acá por si el guard se omite
+   * por bug futuro).
+   *
+   * Devuelve dos listas:
+   *   - `candidatesByDni`: pares User huérfano + Customer huérfano con
+   *     mismo DNI. AUTO-LINKABLES vía POST /customers/:id/link-user.
+   *   - `candidatesByEmail`: pares con mismo email (informativo — el
+   *     admin debe verificar manualmente que es la misma persona).
+   *
+   * Cap: DEDUPE_CANDIDATES_CAP (100) por categoría. El campo
+   * `meta.capped` indica si hubo truncamiento.
+   *
+   * NOTA: Customer.dni @unique impide duplicate Customers con mismo DNI,
+   * por lo que no exponemos "duplicateDnis" (no debería ocurrir).
+   */
+  async findDedupeCandidates(
+    actor: AuthenticatedUser,
+  ): Promise<DedupeCandidatesResponseDto> {
+    // Defense-in-depth: incluso si el guard SUPER_ADMIN falla, el service
+    // rechaza. NO leak de información.
+    if (!this.isSuperAdmin(actor)) {
+      throw new ForbiddenException(
+        'Solo SUPER_ADMIN puede consultar candidatos de dedupe',
+      );
+    }
+
+    // Audit del acceso a esta operación sensible.
+    this.emitAudit({
+      action: 'customer.dedupe_candidates_read',
+      actor,
+      customerId: null,
+      userId: null,
+      source: 'customers.findDedupeCandidates',
+    });
+
+    // 1. Cargar Users huérfanos (sin customerProfile) con DNI.
+    //    +1 al cap para detectar truncamiento.
+    const orphanUsers = await this.prisma.user.findMany({
+      where: { dni: { not: null }, customerProfile: null },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        dni: true,
+      },
+      take: DEDUPE_CANDIDATES_CAP + 1,
+    });
+
+    // 2. Cargar Customers huérfanos (sin userId).
+    const orphanCustomers = await this.prisma.customer.findMany({
+      where: { userId: null },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        dni: true,
+      },
+      take: DEDUPE_CANDIDATES_CAP * 2, // un User puede no matchear, cargar más Customers
+    });
+
+    const usersWithDni = orphanUsers.filter((u): u is typeof u & { dni: string } => !!u.dni);
+    const usersByDni = new Map(usersWithDni.map((u) => [u.dni, u]));
+    const usersByEmail = new Map(
+      orphanUsers
+        .filter((u): u is typeof u & { email: string } => !!u.email)
+        .map((u) => [u.email.toLowerCase(), u]),
+    );
+
+    const candidatesByDni: DedupeCandidateByDniDto[] = [];
+    const candidatesByEmail: DedupeCandidateByEmailDto[] = [];
+
+    for (const customer of orphanCustomers) {
+      if (candidatesByDni.length >= DEDUPE_CANDIDATES_CAP) break;
+      if (!customer.dni) continue;
+      const matchedUser = usersByDni.get(customer.dni);
+      if (!matchedUser) continue;
+      candidatesByDni.push({
+        customerId: customer.id,
+        customerFullName: customer.fullName,
+        matchedDni: customer.dni,
+        userId: matchedUser.id,
+        userEmail: matchedUser.email,
+        userFirstName: matchedUser.firstName,
+        userLastName: matchedUser.lastName,
+      });
+    }
+
+    for (const customer of orphanCustomers) {
+      if (candidatesByEmail.length >= DEDUPE_CANDIDATES_CAP) break;
+      if (!customer.email) continue;
+      const matchedUser = usersByEmail.get(customer.email.toLowerCase());
+      if (!matchedUser) continue;
+      // Evitar duplicar si ya está en candidatesByDni
+      if (candidatesByDni.some((c) => c.customerId === customer.id)) continue;
+      candidatesByEmail.push({
+        customerId: customer.id,
+        customerFullName: customer.fullName,
+        matchedEmail: customer.email,
+        userId: matchedUser.id,
+        userFirstName: matchedUser.firstName,
+        userLastName: matchedUser.lastName,
+      });
+    }
+
+    return {
+      candidatesByDni,
+      candidatesByEmail,
+      meta: {
+        capped:
+          orphanUsers.length > DEDUPE_CANDIDATES_CAP ||
+          candidatesByDni.length >= DEDUPE_CANDIDATES_CAP ||
+          candidatesByEmail.length >= DEDUPE_CANDIDATES_CAP,
+        capLimit: DEDUPE_CANDIDATES_CAP,
+      },
+    };
   }
 
   async update(

@@ -134,6 +134,13 @@ export class EnvironmentVariables {
   @IsString()
   @IsEnum(['lax', 'strict', 'none'])
   REFRESH_COOKIE_SAMESITE?: 'lax' | 'strict' | 'none' = 'lax';
+
+  // ─── FASE 1 / D5 — Customer auto-link feature flag ────────────────────
+  // Acepta 'true' | 'false' | '1' | '0' (parsing flexible vía
+  // app.config.ts:parseBool). Default: 'true'.
+  @IsOptional()
+  @IsString()
+  CUSTOMER_AUTO_LINK_BY_DNI?: string = 'true';
 }
 
 export function validateEnv(

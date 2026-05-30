@@ -43,6 +43,8 @@ import {
   CustomerQueryDto,
   CustomerResponseDto,
   CustomerSearchDto,
+  DedupeCandidatesResponseDto,
+  LinkUserDto,
   UpdateCustomerDto,
 } from './dto';
 
@@ -123,6 +125,31 @@ export class CustomersController {
     });
   }
 
+  // ─── FASE 1 / D5 — Dedupe candidates (SUPER_ADMIN only) ───────────────
+  //
+  // IMPORTANTE: este endpoint debe declararse ANTES de `GET /:id` para
+  // que NestJS resuelva la ruta correctamente. Si fuera al revés,
+  // `:id` matcharia `dedupe-candidates` y aplicaría ParseUUIDPipe que
+  // rechazaría con 400 antes de evaluar este handler.
+  @Roles(AccessLevel.SUPER_ADMIN)
+  @Get('dedupe-candidates')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Listar candidatos de dedupe Customer ↔ User (gobierno de datos)',
+    description:
+      'Devuelve pares User-Customer huérfanos con DNI coincidente ' +
+      '(auto-linkables) y con email coincidente (informativo). ' +
+      'Solo SUPER_ADMIN. Operación auditada.',
+  })
+  @ApiOkResponse({ type: DedupeCandidatesResponseDto })
+  @ApiForbiddenResponse()
+  dedupeCandidates(
+    @CurrentUser() actor: AuthenticatedUser,
+  ): Promise<DedupeCandidatesResponseDto> {
+    return this.service.findDedupeCandidates(actor);
+  }
+
   @Roles(AccessLevel.ADMIN, AccessLevel.SUPER_ADMIN)
   @RequirePermissions('customers.view')
   @Get(':id')
@@ -180,6 +207,35 @@ export class CustomersController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.service.setActive(id, Boolean(dto.active), actor);
+  }
+
+  // ─── FASE 1 / D5 — Vinculación manual Customer ↔ User ─────────────────
+  //
+  // Permisos: requiere AMBOS customers.edit (es mutation sobre Customer)
+  // Y users.view (necesita verificar la existencia del User). Decisión
+  // aprobada FASE 1.
+  //
+  // Audit trail: el service emite `customer.manual_link` con
+  // actorId/customerId/userId/timestamp para gobierno.
+  @Roles(AccessLevel.ADMIN, AccessLevel.SUPER_ADMIN)
+  @RequirePermissions('customers.edit', 'users.view')
+  @Post(':id/link-user')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Vincular un Customer huérfano con una cuenta User existente',
+  })
+  @ApiOkResponse({ type: CustomerResponseDto })
+  @ApiNotFoundResponse()
+  @ApiConflictResponse({
+    description:
+      'Customer ya vinculado, User ya tiene Customer, o DNIs no coinciden',
+  })
+  linkUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: LinkUserDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.service.linkUser(id, dto.userId, actor);
   }
 
   @Roles(AccessLevel.SUPER_ADMIN)
