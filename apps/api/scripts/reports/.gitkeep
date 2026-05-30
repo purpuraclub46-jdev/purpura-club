@@ -1,0 +1,7 @@
+Reports directory for FASE 1 / D6 backfill script.
+
+This file exists to keep the directory tracked in git.
+
+The .gitignore at apps/api/.gitignore excludes all *other* files in this
+directory because backfill reports contain sensitive PII (DNI, email,
+phone). NEVER commit a report file.

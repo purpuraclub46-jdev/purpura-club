@@ -56,3 +56,8 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
+
+# FASE 1 / D6 — backfill script artifacts.
+# Pueden contener DNIs, emails, identificadores fiscales. NUNCA commitear.
+/scripts/reports/*
+!/scripts/reports/.gitkeep

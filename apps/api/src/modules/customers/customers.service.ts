@@ -434,6 +434,19 @@ export class CustomersService {
         );
       }
 
+      // DEUDA TÉCNICA documentada para FASE 1.5:
+      //
+      // Si entre el `findUnique` de Customer y este `update` el record
+      // es eliminado por otra request (race extremadamente improbable),
+      // Prisma lanza P2025 (record not found) — actualmente se propaga
+      // como 500 a través del filtro global de excepciones.
+      //
+      // ROADMAP FASE 1.5: capturar P2025 acá y traducir a una excepción
+      // de dominio específica (`CustomerLinkRaceConditionException`)
+      // que el filtro global mapee a 409 ConflictException con mensaje
+      // operacional claro ("El cliente fue modificado por otra sesión,
+      // recarga e intenta de nuevo"). Aprobado como deuda no bloqueante
+      // en D6 — el flujo P2025 es muy improbable en práctica.
       const updated = await tx.customer.update({
         where: { id: customerId },
         data: {
