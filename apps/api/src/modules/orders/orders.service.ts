@@ -449,14 +449,54 @@ export class OrdersService {
 
   /**
    * Lista los pedidos del cliente autenticado (storefront "Mi cuenta").
-   * Filtra estrictamente por `userId` del JWT — un cliente JAMÁS puede ver
-   * pedidos ajenos aunque manipule query params.
+   *
+   * FASE 1 / D4 — Historial unificado Ecommerce + POS.
+   *
+   * Una orden pertenece al cliente autenticado si CUALQUIERA de estos
+   * dos vínculos sostiene la relación:
+   *
+   *   (1) `Order.userId == JWT.id` — flujo ecommerce o POS post-link.
+   *
+   *   (2) `Order.customer.userId == JWT.id` — flujo POS legacy donde el
+   *       walk-in compró antes de tener cuenta, y luego linkeó. La orden
+   *       conserva `userId=null` históricamente pero `customerId` apunta
+   *       al Customer ahora linkeado al User.
+   *
+   * Seguridad — por qué este filtro NO leak:
+   *
+   *   - `Customer.userId @unique` (schema.prisma:830) garantiza que un
+   *     Customer pertenece a UN SOLO User. No es posible que dos Users
+   *     "compartan" un Customer.
+   *
+   *   - El filtro usa Prisma nested filter `customer: { userId }` que
+   *     traduce a JOIN seguro (`orders.customer_id IN (SELECT id FROM
+   *     customers WHERE user_id = $1)`). NUNCA `customerId IN (lista)`
+   *     que sería manipulable.
+   *
+   *   - Si un Customer tiene `userId=null` (walk-in puro sin cuenta),
+   *     la cláusula `customer.userId = JWT.id` lo excluye por construcción.
+   *
+   *   - Si por anomalía histórica `Customer.userId` apunta a un User
+   *     equivocado, el filtro respeta esa relación — la corrección de
+   *     anomalías es responsabilidad del backfill (D6) + endpoint admin
+   *     dedupe-candidates (D5), NO de esta query.
+   *
+   * Performance esperada:
+   *
+   *   - Índices utilizados (schema.prisma:668-669):
+   *       @@index([userId, status])         → rama OR(1)
+   *       @@index([customerId, status])     → rama OR(2) via JOIN
+   *   - Postgres ejecuta como bitmap OR scan, sin sequential scan.
+   *   - Estimado < 100ms p95 con < 1k órdenes por user, validación real
+   *     en staging (D7) con EXPLAIN ANALYZE.
    */
   async findMine(
     userId: string,
     query: OrderQueryDto,
   ): Promise<Paginated<OrderResponseDto>> {
-    const where: Prisma.OrderWhereInput = { userId };
+    const where: Prisma.OrderWhereInput = {
+      OR: [{ userId }, { customer: { userId } }],
+    };
     if (query.status) where.status = query.status;
     if (query.paymentMethod) where.paymentMethod = query.paymentMethod;
 
@@ -470,6 +510,50 @@ export class OrdersService {
       items: items.map((o) => this.toResponse(o)),
       meta: buildPaginationMeta(total, query.page, query.limit),
     };
+  }
+
+  /**
+   * Detalle de una orden propia del cliente autenticado (storefront).
+   *
+   * FASE 1 / D4 — Acepta UUID (Order.id) o número humano (Order.number,
+   * p.ej. "ORD-20260101-0001"). El ownership check se hace dentro del
+   * mismo WHERE — no hay window donde el cliente pueda leer una orden
+   * ajena.
+   *
+   * Anti-enumeration (consistente con D3): si la orden NO pertenece al
+   * cliente, devolvemos `NotFoundException` con el mismo mensaje que si
+   * la orden no existiera. El cliente NO puede distinguir entre "ID que
+   * no existe" e "ID que existe pero es ajeno". Cero leak de existencia.
+   */
+  async findOneForCustomer(
+    idOrNumber: string,
+    userId: string,
+  ): Promise<OrderResponseDto> {
+    // UUID v4 detection — si no matchea, asumimos formato número humano.
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        idOrNumber,
+      );
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        AND: [
+          isUuid ? { id: idOrNumber } : { number: idOrNumber },
+          // Ownership integrado en el mismo WHERE — atomic check.
+          // Mismo razonamiento de seguridad que findMine().
+          { OR: [{ userId }, { customer: { userId } }] },
+        ],
+      },
+      include: this.repository.include,
+    });
+
+    if (!order) {
+      // Mensaje genérico — no distinguimos "no existe" de "no es tuya".
+      // Anti-enumeration consistent con D3.
+      throw new NotFoundException('Pedido no encontrado');
+    }
+
+    return this.toResponse(order);
   }
 
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderResponseDto>> {

@@ -55,12 +55,13 @@ export class OrdersController {
   }
 
   // Sin @Roles → cualquier usuario autenticado puede acceder a SUS pedidos.
-  // El service filtra estrictamente por userId del JWT.
+  // El service aplica filtro OR(userId, customer.userId) para incluir
+  // órdenes POS de walk-ins linkeados — historial unificado FASE 1 / D4.
   @Get('me')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Listar mis pedidos (storefront — cliente autenticado ve solo los suyos)',
+      'Listar mis pedidos — Ecommerce + POS unificados (storefront cliente)',
   })
   @ApiOkResponse({ type: PaginatedOrdersResponseDto })
   @ApiUnauthorizedResponse()
@@ -69,6 +70,31 @@ export class OrdersController {
     @Query() query: OrderQueryDto,
   ) {
     return this.service.findMine(userId, query);
+  }
+
+  /**
+   * Detalle de una orden propia del cliente autenticado.
+   *
+   * Acepta UUID (Order.id) o número humano (Order.number).
+   * Si la orden NO pertenece al cliente → 404 NotFound (anti-enumeration,
+   * mismo comportamiento que si no existiera).
+   *
+   * Sin @Roles → cualquier usuario autenticado. La autorización es por
+   * ownership, no por rol.
+   */
+  @Get('me/:idOrNumber')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Detalle de mi pedido por id o número (storefront cliente)',
+  })
+  @ApiOkResponse({ type: OrderResponseDto })
+  @ApiNotFoundResponse({ description: 'Pedido no encontrado o no pertenece al usuario' })
+  @ApiUnauthorizedResponse()
+  getMine(
+    @Param('idOrNumber') idOrNumber: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.findOneForCustomer(idOrNumber, userId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
