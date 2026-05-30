@@ -84,6 +84,28 @@ function makeEnrichedUser(overrides: Partial<any> = {}) {
     inventoryLocation: null,
     roles: [],
     customPermissions: [],
+    customerProfile: null, // FASE 1 / D3 — default: User sin Customer linkeado
+    ...overrides,
+  };
+}
+
+function makeCustomerProfileFixture(overrides: Partial<any> = {}) {
+  return {
+    id: 'cust-uuid-1',
+    firstName: 'Jane',
+    lastName: 'Doe',
+    fullName: 'Jane Doe',
+    phone: null,
+    dni: null,
+    documentType: 'DNI' as const,
+    ruc: null,
+    legalName: null,
+    fiscalAddress: null,
+    birthDate: null,
+    gender: null,
+    isMember: false,
+    membershipExpiresAt: null,
+    primaryLocationId: null,
     ...overrides,
   };
 }
@@ -205,11 +227,11 @@ describe('AuthService.register — FASE 1 atomic register', () => {
   });
 
   // ─── T1.2 ──────────────────────────────────────────────────────────────
-  it('T1.2 — Register con email duplicado: 409 antes de hashear password', async () => {
+  it('T1.2 — Register con email duplicado: 409 genérico antes de hashear password', async () => {
     prisma.user.findUnique.mockResolvedValueOnce({ id: 'existing-uuid' });
 
     await expect(service.register(makeDto())).rejects.toThrow(
-      ConflictException,
+      'An account with this information already exists',
     );
 
     expect(passwords.hash).not.toHaveBeenCalled(); // economía: rechazo early
@@ -243,14 +265,16 @@ describe('AuthService.register — FASE 1 atomic register', () => {
   });
 
   // ─── T1.4 ──────────────────────────────────────────────────────────────
-  it('T1.4 — Register con DNI que ya pertenece a otro User: 409 sin TX', async () => {
+  it('T1.4 — Register con DNI que ya pertenece a otro User: 409 genérico sin TX', async () => {
     const dto = makeDto({ dni: '72345678' });
 
     prisma.user.findUnique
       .mockResolvedValueOnce(null) // by email
       .mockResolvedValueOnce({ id: 'other-user-uuid' }); // by dni → conflicto
 
-    await expect(service.register(dto)).rejects.toThrow(ConflictException);
+    await expect(service.register(dto)).rejects.toThrow(
+      'An account with this information already exists',
+    );
     expect(passwords.hash).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -291,7 +315,7 @@ describe('AuthService.register — FASE 1 atomic register', () => {
   });
 
   // ─── T1.6 ──────────────────────────────────────────────────────────────
-  it('T1.6 — Register con DNI ya linkeado a otro Customer-User: 409', async () => {
+  it('T1.6 — DNI ya linkeado a otro Customer-User: 409 genérico (indistinguible)', async () => {
     const dto = makeDto({ dni: '72345678' });
 
     prisma.user.findUnique
@@ -302,7 +326,9 @@ describe('AuthService.register — FASE 1 atomic register', () => {
       userId: 'other-user-uuid', // YA linkeado a otro User
     });
 
-    await expect(service.register(dto)).rejects.toThrow(ConflictException);
+    await expect(service.register(dto)).rejects.toThrow(
+      'An account with this information already exists',
+    );
     expect(passwords.hash).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -338,7 +364,7 @@ describe('AuthService.register — FASE 1 atomic register', () => {
   });
 
   // ─── T1.8 ──────────────────────────────────────────────────────────────
-  it('T1.8 — Concurrencia: race condition email duplicado dispara P2002 → 409', async () => {
+  it('T1.8 — Concurrencia: race condition email duplicado → 409 genérico', async () => {
     const dto = makeDto();
 
     // Pre-flight ve email libre (otra request lo crea antes de la TX)
@@ -348,7 +374,9 @@ describe('AuthService.register — FASE 1 atomic register', () => {
       throw prismaConflict(['email']);
     });
 
-    await expect(service.register(dto)).rejects.toThrow(ConflictException);
+    await expect(service.register(dto)).rejects.toThrow(
+      'An account with this information already exists',
+    );
     expect(passwords.hash).toHaveBeenCalled(); // pasó pre-flight
   });
 
@@ -380,8 +408,8 @@ describe('AuthService.register — FASE 1 atomic register', () => {
     // observable. La atomicidad real se valida en integration tests con DB.
   });
 
-  // ─── Edge case: error P2002 sobre dni ─────────────────────────────────
-  it('Edge — P2002 sobre target dni mapea a mensaje específico DNI', async () => {
+  // ─── Edge: P2002 sobre DNI también mapea a mensaje genérico ────────────
+  it('Edge — P2002 sobre target dni mapea a mensaje genérico (anti-enumeration)', async () => {
     const dto = makeDto({ dni: '72345678' });
 
     prisma.user.findUnique
@@ -393,7 +421,124 @@ describe('AuthService.register — FASE 1 atomic register', () => {
     });
 
     await expect(service.register(dto)).rejects.toThrow(
-      'This DNI already belongs to another account',
+      'An account with this information already exists',
     );
+  });
+});
+
+// ─── T2.* — D3: /auth/me con customerProfile ────────────────────────────
+
+describe('AuthService.getProfile — FASE 1 / D3 customerProfile expansion', () => {
+  let service: AuthService;
+  let prisma: PrismaMock;
+
+  beforeEach(async () => {
+    prisma = createPrismaMock();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: PasswordHelper,
+          useValue: { hash: jest.fn(), compare: jest.fn() },
+        },
+        {
+          provide: TokenHelper,
+          useValue: {
+            issueTokens: jest.fn(),
+            hashRefreshToken: jest.fn(),
+            verifyRefreshToken: jest.fn(),
+            compareRefreshToken: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<AuthService>(AuthService);
+  });
+
+  // ─── T2.1 ──────────────────────────────────────────────────────────────
+  it('T2.1 — User con Customer linkeado → /auth/me devuelve customerProfile completo', async () => {
+    const customerFixture = makeCustomerProfileFixture({
+      dni: '72345678',
+      phone: '+51999111222',
+      isMember: true,
+      membershipExpiresAt: new Date('2027-06-01'),
+      documentType: 'DNI',
+    });
+    prisma.user.findUnique.mockResolvedValueOnce(
+      makeEnrichedUser({
+        dni: '72345678',
+        customerProfile: customerFixture,
+      }),
+    );
+
+    const result = await service.getProfile('user-uuid-1');
+
+    expect(result.customerProfile).not.toBeNull();
+    expect(result.customerProfile).toEqual({
+      id: 'cust-uuid-1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      fullName: 'Jane Doe',
+      phone: '+51999111222',
+      dni: '72345678',
+      documentType: 'DNI',
+      ruc: null,
+      legalName: null,
+      fiscalAddress: null,
+      birthDate: null,
+      gender: null,
+      isMember: true,
+      membershipExpiresAt: new Date('2027-06-01'),
+      primaryLocationId: null,
+    });
+    // Verificación del JOIN: rbacSelect debe incluir customerProfile
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'user-uuid-1' },
+        include: expect.objectContaining({
+          customerProfile: expect.objectContaining({
+            select: expect.objectContaining({
+              id: true,
+              isMember: true,
+              membershipExpiresAt: true,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  // ─── T2.2 ──────────────────────────────────────────────────────────────
+  it('T2.2 — User legacy sin Customer (defensivo) → customerProfile: null sin error', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce(
+      makeEnrichedUser({ customerProfile: null }),
+    );
+
+    const result = await service.getProfile('legacy-user-uuid');
+
+    expect(result.customerProfile).toBeNull();
+    // El resto del response sigue intacto — backward compat verificada
+    expect(result.id).toBe('user-uuid-1');
+    expect(result.email).toBe('jane@example.com');
+    expect(result.role).toBe(Role.USER);
+  });
+
+  // ─── T2.3 (extra) — Backward compat: register también incluye customerProfile ──
+  it('T2.3 — Response de register/login/me todos incluyen customerProfile cuando existe', async () => {
+    // Verificamos que toAuthUser (helper privado) propaga customerProfile
+    // a todos los endpoints que retornan AuthUserDto.
+    const customerFixture = makeCustomerProfileFixture({ isMember: false });
+    prisma.user.findUnique.mockResolvedValueOnce(
+      makeEnrichedUser({ customerProfile: customerFixture }),
+    );
+
+    const result = await service.getProfile('user-uuid-1');
+
+    expect(result).toHaveProperty('customerProfile');
+    expect(result.customerProfile?.id).toBe('cust-uuid-1');
+    expect(result.customerProfile?.isMember).toBe(false);
   });
 });

@@ -4,14 +4,42 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, Role, User } from '@prisma/client';
+import {
+  CustomerDocumentType,
+  CustomerGender,
+  Prisma,
+  Role,
+  User,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
+import { CustomerProfileSummaryDto } from './dto/customer-profile-summary.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { PasswordHelper } from './helpers/password.helper';
 import { TokenHelper } from './helpers/token.helper';
 import { AuthTokens } from './interfaces/authenticated-user.interface';
+
+// Shape del Customer embebido en el response de /auth/me y register/login.
+// FASE 1 / D3: campo opcional, nullable. Backward-compatible — consumers
+// del storefront que no lo procesen siguen funcionando.
+type CustomerProfileSelect = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  phone: string | null;
+  dni: string | null;
+  documentType: CustomerDocumentType;
+  ruc: string | null;
+  legalName: string | null;
+  fiscalAddress: string | null;
+  birthDate: Date | null;
+  gender: CustomerGender | null;
+  isMember: boolean;
+  membershipExpiresAt: Date | null;
+  primaryLocationId: string | null;
+};
 
 interface UserWithRbac extends User {
   inventoryLocation: { id: string; name: string; slug: string } | null;
@@ -28,6 +56,7 @@ interface UserWithRbac extends User {
     allowed: boolean;
     permission: { key: string };
   }[];
+  customerProfile: CustomerProfileSelect | null;
 }
 
 @Injectable()
@@ -63,12 +92,18 @@ export class AuthService {
     // ─── Pre-flight checks ──────────────────────────────────────────────
     // Lecturas idempotentes fuera de TX para dar errores claros antes de
     // hashear la password (que es la operación más cara).
+    //
+    // Anti-enumeration: TODOS los conflictos devuelven el mismo mensaje
+    // genérico — el storefront no puede inferir si fue email, DNI o
+    // Customer linkeado. Decisión D3 aprobada.
     const existingByEmail = await this.prisma.user.findUnique({
       where: { email: dto.email },
       select: { id: true },
     });
     if (existingByEmail) {
-      throw new ConflictException('An account with this email already exists');
+      throw new ConflictException(
+        'An account with this information already exists',
+      );
     }
 
     if (dto.dni) {
@@ -78,21 +113,21 @@ export class AuthService {
       });
       if (existingUserByDni) {
         throw new ConflictException(
-          'This DNI already belongs to another account',
+          'An account with this information already exists',
         );
       }
 
-      // Anti-typo: si el DNI pertenece a un Customer YA linkeado a otro
-      // User, el cliente probablemente ya tiene cuenta y olvidó. Devolver
-      // 409 con copy específico (storefront lo puede traducir a "¿olvidaste
-      // tu contraseña?").
+      // El DNI también puede pertenecer a un Customer YA linkeado a otro
+      // User (la persona ya tiene cuenta y olvidó la contraseña). Mismo 409
+      // genérico — el storefront ofrece "¿olvidaste tu contraseña?" en
+      // TODO 409 de register sin discriminar el motivo.
       const linkedCustomerWithDni = await this.prisma.customer.findUnique({
         where: { dni: dto.dni },
         select: { id: true, userId: true },
       });
       if (linkedCustomerWithDni && linkedCustomerWithDni.userId) {
         throw new ConflictException(
-          'This DNI already belongs to another account',
+          'An account with this information already exists',
         );
       }
     }
@@ -185,26 +220,16 @@ export class AuthService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        // Constraint violation race. Mapear según target.
+        // Race condition: constraint violation tras pre-flight checks.
+        // Mensaje genérico (anti-enumeration). El `target` queda en logs
+        // para diagnóstico operacional pero no se filtra al cliente.
         const target = (error.meta?.target as string[] | undefined) ?? [];
-        if (target.includes('email')) {
-          throw new ConflictException(
-            'An account with this email already exists',
-          );
-        }
-        if (target.includes('dni')) {
-          throw new ConflictException(
-            'This DNI already belongs to another account',
-          );
-        }
-        if (target.includes('userId')) {
-          // Customer.userId @unique violado — race condition extrema.
-          // Nunca debería ocurrir porque el User es recién creado en esta TX.
-          throw new ConflictException(
-            'A duplicate customer link was detected',
-          );
-        }
-        throw new ConflictException('A duplicate entry conflict occurred');
+        this.logger.warn(
+          `[auth.register] P2002 race condition on target=${target.join(',')}`,
+        );
+        throw new ConflictException(
+          'An account with this information already exists',
+        );
       }
       throw error;
     }
@@ -378,6 +403,29 @@ export class AuthService {
           permission: { select: { key: true } },
         },
       },
+      // FASE 1 / D3: include del Customer asociado para exponer
+      // customerProfile en /auth/me y register/login responses. Nullable
+      // por contrato (campo opcional en el DTO) — defensivo ante Users
+      // legacy pre-backfill.
+      customerProfile: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          fullName: true,
+          phone: true,
+          dni: true,
+          documentType: true,
+          ruc: true,
+          legalName: true,
+          fiscalAddress: true,
+          birthDate: true,
+          gender: true,
+          isMember: true,
+          membershipExpiresAt: true,
+          primaryLocationId: true,
+        },
+      },
     } satisfies Prisma.UserInclude;
   }
 
@@ -442,6 +490,30 @@ export class AuthService {
       permissions: isSuperAdmin ? ['*'] : [...perms],
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      customerProfile: this.toCustomerProfileSummary(user.customerProfile),
+    };
+  }
+
+  private toCustomerProfileSummary(
+    customer: CustomerProfileSelect | null,
+  ): CustomerProfileSummaryDto | null {
+    if (!customer) return null;
+    return {
+      id: customer.id,
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      fullName: customer.fullName,
+      phone: customer.phone,
+      dni: customer.dni,
+      documentType: customer.documentType,
+      ruc: customer.ruc,
+      legalName: customer.legalName,
+      fiscalAddress: customer.fiscalAddress,
+      birthDate: customer.birthDate,
+      gender: customer.gender,
+      isMember: customer.isMember,
+      membershipExpiresAt: customer.membershipExpiresAt,
+      primaryLocationId: customer.primaryLocationId,
     };
   }
 }

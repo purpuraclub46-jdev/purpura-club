@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { CustomerProfileSummaryDto } from './customer-profile-summary.dto';
 
 export class AuthUserLocationDto {
   @ApiProperty({ format: 'uuid' })
@@ -60,6 +61,21 @@ export class AuthUserDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
+
+  // FASE 1 / D3: Customer asociado al User (CRM perfil comercial).
+  //
+  // - `null` si el User no tiene Customer linkeado (caso defensivo: Users
+  //   creados antes del backfill FASE 1). Post-FASE 1, todo User nuevo
+  //   creado vía /auth/register tiene Customer obligatorio.
+  // - Campo opcional → backward compatible. Consumers que lo ignoren
+  //   siguen funcionando sin cambios.
+  @ApiPropertyOptional({
+    type: CustomerProfileSummaryDto,
+    nullable: true,
+    description:
+      'Perfil Customer asociado. null si el User no tiene Customer (Users legacy pre-FASE 1).',
+  })
+  customerProfile?: CustomerProfileSummaryDto | null;
 }
 
 export class AuthTokensDto {
