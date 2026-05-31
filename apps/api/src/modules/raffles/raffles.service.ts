@@ -5,16 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  Prisma,
-  Raffle,
-  RaffleStatus,
-  RaffleVisibility,
-} from '@prisma/client';
+import { Prisma, Raffle, RaffleStatus, RaffleVisibility } from '@prisma/client';
 import {
   Paginated,
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
+import { MembershipsService } from '../memberships/memberships.service';
 import {
   AdminRaffleQueryDto,
   CreateRaffleDto,
@@ -24,21 +20,33 @@ import {
 } from './dto';
 import { RaffleResponseDto } from './dto/raffle-response.dto';
 import { generateUniqueSlug, slugify } from './helpers/slug.helper';
+import { RafflePricingService } from './raffle-pricing.service';
 import { RafflesRepository } from './repositories/raffles.repository';
 
 @Injectable()
 export class RafflesService {
   private readonly logger = new Logger(RafflesService.name);
 
-  constructor(private readonly rafflesRepository: RafflesRepository) {}
+  constructor(
+    private readonly rafflesRepository: RafflesRepository,
+    private readonly rafflePricing: RafflePricingService,
+    private readonly memberships: MembershipsService,
+  ) {}
 
   async create(dto: CreateRaffleDto): Promise<RaffleResponseDto> {
     this.assertValidDateRange(dto.startDate, dto.endDate);
-    this.assertValidPricing(dto.ticketPrice, dto.memberTicketPrice);
 
     const slug = await this.resolveSlug(dto.slug, dto.title);
 
     try {
+      // F2.7-B / D5 — Ignoramos `dto.memberTicketPrice`: el precio socio
+      // es siempre 50 % off del precio público. Persistimos el valor derivado
+      // en la columna legacy para mantener compatibilidad con consumers
+      // externos que aún la lean. La fuente de verdad sigue siendo
+      // RafflePricingService.
+      const memberTicketPrice = this.rafflePricing.getMemberPrice({
+        ticketPrice: dto.ticketPrice,
+      });
       const raffle = await this.rafflesRepository.create({
         title: dto.title,
         slug,
@@ -47,7 +55,7 @@ export class RafflesService {
         prizeImage: dto.prizeImage,
         countdown: dto.countdown,
         ticketPrice: new Prisma.Decimal(dto.ticketPrice),
-        memberTicketPrice: new Prisma.Decimal(dto.memberTicketPrice),
+        memberTicketPrice: new Prisma.Decimal(memberTicketPrice),
         totalTickets: dto.totalTickets,
         startDate: dto.startDate,
         endDate: dto.endDate,
@@ -56,7 +64,7 @@ export class RafflesService {
       });
 
       this.logger.log(`Raffle created ${raffle.id} (${raffle.slug})`);
-      return this.toResponse(raffle);
+      return this.toResponse(raffle, false);
     } catch (error) {
       throw this.translateUniqueSlugError(error);
     }
@@ -73,17 +81,14 @@ export class RafflesService {
     const endDate = dto.endDate ?? existing.endDate;
     this.assertValidDateRange(startDate, endDate);
 
-    if (dto.totalTickets !== undefined && dto.totalTickets < existing.soldTickets) {
+    if (
+      dto.totalTickets !== undefined &&
+      dto.totalTickets < existing.soldTickets
+    ) {
       throw new BadRequestException(
         `totalTickets (${dto.totalTickets}) cannot be lower than already sold (${existing.soldTickets})`,
       );
     }
-
-    const ticketPrice =
-      dto.ticketPrice ?? this.decimalToNumber(existing.ticketPrice);
-    const memberTicketPrice =
-      dto.memberTicketPrice ?? this.decimalToNumber(existing.memberTicketPrice);
-    this.assertValidPricing(ticketPrice, memberTicketPrice);
 
     let slug = existing.slug;
     if (dto.slug !== undefined && dto.slug !== existing.slug) {
@@ -96,6 +101,18 @@ export class RafflesService {
     }
 
     try {
+      // F2.7-B / D5 — Cuando se actualiza `ticketPrice`, recalculamos el
+      // precio socio derivado para no dejar la columna legacy huérfana. Si
+      // el caller envía `memberTicketPrice` se ignora deliberadamente.
+      const memberTicketPriceForDb =
+        dto.ticketPrice !== undefined
+          ? new Prisma.Decimal(
+              this.rafflePricing.getMemberPrice({
+                ticketPrice: dto.ticketPrice,
+              }),
+            )
+          : undefined;
+
       const updated = await this.rafflesRepository.update(id, {
         title: dto.title,
         slug,
@@ -107,10 +124,7 @@ export class RafflesService {
           dto.ticketPrice !== undefined
             ? new Prisma.Decimal(dto.ticketPrice)
             : undefined,
-        memberTicketPrice:
-          dto.memberTicketPrice !== undefined
-            ? new Prisma.Decimal(dto.memberTicketPrice)
-            : undefined,
+        memberTicketPrice: memberTicketPriceForDb,
         totalTickets: dto.totalTickets,
         startDate: dto.startDate,
         endDate: dto.endDate,
@@ -118,7 +132,7 @@ export class RafflesService {
         visibility: dto.visibility,
       });
 
-      return this.toResponse(updated);
+      return this.toResponse(updated, false);
     } catch (error) {
       throw this.translateUniqueSlugError(error);
     }
@@ -147,7 +161,7 @@ export class RafflesService {
     }
 
     if (raffle.status === RaffleStatus.PUBLISHED) {
-      return this.toResponse(raffle);
+      return this.toResponse(raffle, false);
     }
 
     if (raffle.status === RaffleStatus.CANCELLED) {
@@ -165,7 +179,7 @@ export class RafflesService {
     });
 
     this.logger.log(`Raffle published ${id}`);
-    return this.toResponse(updated);
+    return this.toResponse(updated, false);
   }
 
   async close(id: string): Promise<RaffleResponseDto> {
@@ -174,16 +188,17 @@ export class RafflesService {
       throw new NotFoundException('Raffle not found');
     }
     if (raffle.status === RaffleStatus.CLOSED) {
-      return this.toResponse(raffle);
+      return this.toResponse(raffle, false);
     }
     const updated = await this.rafflesRepository.update(id, {
       status: RaffleStatus.CLOSED,
     });
-    return this.toResponse(updated);
+    return this.toResponse(updated, false);
   }
 
   async findPublic(
     query: RaffleQueryDto,
+    userId?: string | null,
   ): Promise<Paginated<RaffleResponseDto>> {
     const now = new Date();
     const where: Prisma.RaffleWhereInput = {
@@ -204,7 +219,7 @@ export class RafflesService {
       ];
     }
 
-    return this.runListQuery(where, query.page, query.limit);
+    return this.runListQuery(where, query.page, query.limit, userId);
   }
 
   async findAdmin(
@@ -229,10 +244,13 @@ export class RafflesService {
       ];
     }
 
-    return this.runListQuery(where, query.page, query.limit);
+    return this.runListQuery(where, query.page, query.limit, null);
   }
 
-  async findBySlugPublic(slug: string): Promise<RaffleResponseDto> {
+  async findBySlugPublic(
+    slug: string,
+    userId?: string | null,
+  ): Promise<RaffleResponseDto> {
     const raffle = await this.rafflesRepository.findBySlug(slug);
 
     if (
@@ -243,7 +261,8 @@ export class RafflesService {
       throw new NotFoundException('Raffle not found');
     }
 
-    return this.toResponse(raffle);
+    const isMember = await this.resolveIsMember(userId);
+    return this.toResponse(raffle, isMember);
   }
 
   async findByIdOrFail(id: string): Promise<Raffle> {
@@ -258,13 +277,14 @@ export class RafflesService {
 
   async findByIdAdmin(id: string): Promise<RaffleResponseDto> {
     const raffle = await this.findByIdOrFail(id);
-    return this.toResponse(raffle);
+    return this.toResponse(raffle, false);
   }
 
   private async runListQuery(
     where: Prisma.RaffleWhereInput,
     page: number,
     limit: number,
+    userId?: string | null,
   ): Promise<Paginated<RaffleResponseDto>> {
     const { items, total } = await this.rafflesRepository.findMany({
       where,
@@ -272,10 +292,21 @@ export class RafflesService {
       limit,
     });
 
+    // Resolvemos `isMember` UNA vez por request (no por raffle) para evitar
+    // N consultas en listados grandes.
+    const isMember = await this.resolveIsMember(userId);
+
     return {
-      items: items.map((raffle) => this.toResponse(raffle)),
+      items: items.map((raffle) => this.toResponse(raffle, isMember)),
       meta: buildPaginationMeta(total, page, limit),
     };
+  }
+
+  private async resolveIsMember(
+    userId: string | null | undefined,
+  ): Promise<boolean> {
+    if (!userId) return false;
+    return this.memberships.isActive(userId);
   }
 
   private async resolveSlug(
@@ -310,14 +341,6 @@ export class RafflesService {
     }
   }
 
-  private assertValidPricing(ticket: number, member: number): void {
-    if (member > ticket) {
-      throw new BadRequestException(
-        'memberTicketPrice cannot exceed ticketPrice',
-      );
-    }
-  }
-
   private translateUniqueSlugError(error: unknown): Error {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -335,7 +358,8 @@ export class RafflesService {
     return Number(value);
   }
 
-  private toResponse(raffle: Raffle): RaffleResponseDto {
+  private toResponse(raffle: Raffle, isMember: boolean): RaffleResponseDto {
+    const pricing = this.rafflePricing.resolveFor(raffle, isMember);
     return {
       id: raffle.id,
       title: raffle.title,
@@ -345,7 +369,10 @@ export class RafflesService {
       prizeImage: raffle.prizeImage,
       countdown: raffle.countdown,
       ticketPrice: this.decimalToNumber(raffle.ticketPrice),
-      memberTicketPrice: this.decimalToNumber(raffle.memberTicketPrice),
+      // F2.7-B — `memberTicketPrice` se sigue exponiendo como derivado
+      // server-side (NUNCA se lee directo desde DB) para no romper consumers
+      // legacy. El bloque `pricing` es la fuente canónica nueva.
+      memberTicketPrice: pricing.memberPrice,
       totalTickets: raffle.totalTickets,
       soldTickets: raffle.soldTickets,
       remainingTickets: Math.max(0, raffle.totalTickets - raffle.soldTickets),
@@ -356,6 +383,7 @@ export class RafflesService {
       endDate: raffle.endDate,
       createdAt: raffle.createdAt,
       updatedAt: raffle.updatedAt,
+      pricing,
     };
   }
 }

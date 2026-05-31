@@ -20,7 +20,11 @@ import {
 const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export class CreateRaffleDto {
-  @ApiProperty({ example: 'Sorteo iPhone 15 Pro', minLength: 3, maxLength: 200 })
+  @ApiProperty({
+    example: 'Sorteo iPhone 15 Pro',
+    minLength: 3,
+    maxLength: 200,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
@@ -45,7 +49,9 @@ export class CreateRaffleDto {
   })
   slug?: string;
 
-  @ApiProperty({ example: 'Detalle completo del sorteo, condiciones y premio.' })
+  @ApiProperty({
+    example: 'Detalle completo del sorteo, condiciones y premio.',
+  })
   @IsString()
   @IsNotEmpty()
   @MinLength(10)
@@ -74,23 +80,40 @@ export class CreateRaffleDto {
   @IsDate()
   countdown?: Date;
 
-  @ApiProperty({ example: 25, minimum: 0, description: 'Public ticket price in PEN.' })
+  @ApiProperty({
+    example: 25,
+    minimum: 0,
+    description: 'Public ticket price in PEN.',
+  })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   ticketPrice!: number;
 
-  @ApiProperty({
-    example: 15,
+  /**
+   * @deprecated F2.7-B — El precio socio es siempre 50 % del público; el
+   * backend lo calcula automáticamente. Si el caller lo envía, se ignora.
+   * Se mantiene como opcional únicamente para no romper integraciones
+   * legacy (admin panel viejo).
+   */
+  @ApiPropertyOptional({
+    example: 5,
     minimum: 0,
-    description: 'Discounted ticket price for Púrpura Club members.',
+    deprecated: true,
+    description:
+      'DEPRECATED — Ignorado por el backend. El precio socio = round2(ticketPrice * 0.5).',
   })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  memberTicketPrice!: number;
+  memberTicketPrice?: number;
 
-  @ApiProperty({ example: 500, minimum: 1, description: 'Total tickets in the raffle.' })
+  @ApiProperty({
+    example: 500,
+    minimum: 1,
+    description: 'Total tickets in the raffle.',
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)

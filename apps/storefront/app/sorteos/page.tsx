@@ -291,8 +291,16 @@ function SorteosHero({ featured, loading }: HeroProps) {
               label="Tickets activos"
             />
             <Metric
-              value={featured ? formatCurrency(featured.memberTicketPrice ?? featured.ticketPrice) : "—"}
-              label="Ticket desde"
+              value={
+                featured
+                  ? formatCurrency(featured.pricing.applicablePrice)
+                  : "—"
+              }
+              label={
+                featured && featured.pricing.isMember
+                  ? "Tu precio socio"
+                  : "Ticket desde"
+              }
             />
           </motion.div>
         </div>
@@ -406,11 +414,25 @@ function FeaturedRaffleCard({
         <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-3">
           <div>
             <p className="text-[10px] uppercase tracking-[0.22em] text-white/45">
-              Ticket desde
+              {raffle.pricing.isMember ? "Tu precio socio" : "Ticket desde"}
             </p>
-            <p className="text-base font-semibold tabular-nums text-white">
-              {formatCurrency(raffle.memberTicketPrice ?? raffle.ticketPrice)}
-            </p>
+            <div className="flex items-baseline gap-1.5">
+              <p className="text-base font-semibold tabular-nums text-white">
+                {formatCurrency(raffle.pricing.applicablePrice)}
+              </p>
+              {raffle.pricing.isMember &&
+              raffle.pricing.memberPrice < raffle.pricing.publicPrice ? (
+                <span className="text-[10px] font-medium tabular-nums text-white/45 line-through">
+                  {formatCurrency(raffle.pricing.publicPrice)}
+                </span>
+              ) : null}
+            </div>
+            {!raffle.pricing.isMember &&
+            raffle.pricing.memberPrice < raffle.pricing.publicPrice ? (
+              <p className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-[#c026d3]">
+                Socios: {formatCurrency(raffle.pricing.memberPrice)}
+              </p>
+            ) : null}
           </div>
           <Button variant="accent" size="sm">
             Ver detalle
@@ -655,11 +677,25 @@ function RaffleCard({ raffle, index }: { raffle: RaffleEntity; index: number }) 
           <div className="flex items-center justify-between border-t border-white/10 pt-3">
             <div>
               <p className="text-[10px] uppercase tracking-[0.22em] text-white/45">
-                Ticket desde
+                {raffle.pricing.isMember ? "Tu precio socio" : "Ticket desde"}
               </p>
-              <p className="text-sm font-semibold tabular-nums text-white">
-                {formatCurrency(raffle.memberTicketPrice ?? raffle.ticketPrice)}
-              </p>
+              <div className="flex items-baseline gap-1.5">
+                <p className="text-sm font-semibold tabular-nums text-white">
+                  {formatCurrency(raffle.pricing.applicablePrice)}
+                </p>
+                {raffle.pricing.isMember &&
+                raffle.pricing.memberPrice < raffle.pricing.publicPrice ? (
+                  <span className="text-[10px] font-medium tabular-nums text-white/45 line-through">
+                    {formatCurrency(raffle.pricing.publicPrice)}
+                  </span>
+                ) : null}
+              </div>
+              {!raffle.pricing.isMember &&
+              raffle.pricing.memberPrice < raffle.pricing.publicPrice ? (
+                <p className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-[#c026d3]">
+                  Socios: {formatCurrency(raffle.pricing.memberPrice)}
+                </p>
+              ) : null}
             </div>
             <div className="text-right">
               <p className="text-[10px] uppercase tracking-[0.22em] text-white/45">

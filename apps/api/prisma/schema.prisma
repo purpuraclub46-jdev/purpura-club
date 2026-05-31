@@ -36,6 +36,13 @@ model User {
   // el primer pedido elegible recompensa al referrer.
   referredByUserId String? @db.Uuid
 
+  // F2.7-C — Código único, permanente e inmutable para compartir referidos.
+  // Formato: PCLUB-XXXXXX (6 chars del alfabeto sin ambigüedad). Generado
+  // atómicamente en register/backfill. NUNCA se regenera ni se edita desde
+  // Admin. Nullable solo durante la ventana de migración + backfill; una
+  // vez ejecutado el backfill, todos los users tienen código.
+  referralCode String? @unique
+
   // DNI/documento de identidad — requerido para la entrega de premios.
   // Opcional para no romper usuarios pre-existentes.
   dni String? @unique

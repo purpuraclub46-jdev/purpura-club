@@ -46,7 +46,8 @@ const toPayload = (values: RaffleFormValues): CreateRafflePayload => ({
     ? new Date(values.countdown).toISOString()
     : undefined,
   ticketPrice: values.ticketPrice,
-  memberTicketPrice: values.memberTicketPrice,
+  // F2.7-B — `memberTicketPrice` ya NO se envía. El backend siempre lo
+  // calcula como `ticketPrice * 0.5` (regla fija del cliente).
   totalTickets: values.totalTickets,
   startDate: new Date(values.startDate).toISOString(),
   endDate: new Date(values.endDate).toISOString(),
@@ -75,7 +76,6 @@ export function RaffleForm({ initial, mode }: RaffleFormProps) {
       prizeImage: initial?.prizeImage ?? "",
       countdown: toDateInputValue(initial?.countdown) || "",
       ticketPrice: initial?.ticketPrice ?? 0,
-      memberTicketPrice: initial?.memberTicketPrice ?? 0,
       totalTickets: initial?.totalTickets ?? 100,
       startDate: toDateInputValue(initial?.startDate) || "",
       endDate: toDateInputValue(initial?.endDate) || "",
@@ -175,11 +175,12 @@ export function RaffleForm({ initial, mode }: RaffleFormProps) {
         </FormField>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         <FormField
           label="Precio público (PEN)"
           htmlFor="ticketPrice"
           required
+          description="Los socios Púrpura Club pagan automáticamente la mitad (50% off)."
           error={errors.ticketPrice?.message}
         >
           <Input
@@ -189,21 +190,18 @@ export function RaffleForm({ initial, mode }: RaffleFormProps) {
             min={0}
             {...register("ticketPrice", { valueAsNumber: true })}
           />
-        </FormField>
-        <FormField
-          label="Precio miembro (PEN)"
-          htmlFor="memberTicketPrice"
-          required
-          description="Precio con descuento para miembros Púrpura Club."
-          error={errors.memberTicketPrice?.message}
-        >
-          <Input
-            id="memberTicketPrice"
-            type="number"
-            step="0.01"
-            min={0}
-            {...register("memberTicketPrice", { valueAsNumber: true })}
-          />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Precio para socios:{" "}
+            <span className="font-medium tabular-nums text-foreground">
+              S/{" "}
+              {(Math.round((watch("ticketPrice") ?? 0) * 0.5 * 100) / 100)
+                .toFixed(2)
+                .toString()}
+            </span>{" "}
+            <span className="text-[10px] uppercase tracking-[0.12em]">
+              (calculado automáticamente)
+            </span>
+          </p>
         </FormField>
         <FormField
           label="Total de tickets"

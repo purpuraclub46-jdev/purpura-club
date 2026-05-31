@@ -7,7 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  EntryStatus,
   InventoryMovementType,
   MembershipBenefitType,
   OrderChannel,
@@ -26,10 +25,8 @@ import {
   formatReceiptNumber,
   lineBreakdownGross,
 } from '../fiscal/fiscal.util';
-import {
-  computeNextExpiration,
-  isQualifyingPurchase,
-} from '../memberships/membership.helpers';
+import { isQualifyingPurchase } from '../memberships/membership.helpers';
+import { MembershipsService } from '../memberships/memberships.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import {
   CreateCreditNoteDto,
@@ -112,6 +109,7 @@ export class PosCreditNotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly receipts: ReceiptsService,
+    private readonly memberships: MembershipsService,
   ) {}
 
   // ─── Búsqueda de venta para devolución ─────────────────────────────────
@@ -275,10 +273,7 @@ export class PosCreditNotesService {
     }
 
     const subtotal = round2(
-      itemsToReturn.reduce(
-        (acc, it) => acc + it.unitPrice * it.quantity,
-        0,
-      ),
+      itemsToReturn.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0),
     );
     const total = subtotal;
     const refundedCash =
@@ -443,9 +438,7 @@ export class PosCreditNotesService {
         customerFiscalAddress: order.customerFiscalAddress,
         customerEmail: order.customerEmail,
         // ── Comprobante NC ──
-        receiptType: ncReceiptData
-          ? ReceiptSeriesType.NOTA_CREDITO
-          : null,
+        receiptType: ncReceiptData ? ReceiptSeriesType.NOTA_CREDITO : null,
         receiptSeries: ncReceiptData?.series ?? null,
         receiptNumber: ncReceiptData?.number ?? null,
         receiptIssuedAt: ncReceiptData?.issuedAt ?? null,
@@ -486,9 +479,7 @@ export class PosCreditNotesService {
     }
 
     // 7) Determinar si la orden queda totalmente devuelta
-    const totalReturnedAfter = round2(
-      this.sumRefundedTotal(order) + total,
-    );
+    const totalReturnedAfter = round2(this.sumRefundedTotal(order) + total);
     const orderTotal = Number(order.total);
     const isFullyRefunded =
       dto.type === POSCreditNoteType.FULL_RETURN ||
@@ -504,22 +495,22 @@ export class PosCreditNotesService {
       orderRefunded = true;
     }
 
-    // 8) Revertir raffle entries proporcionalmente (en full o si la orden ya quedó fully refunded)
+    // 8+9) F2.7-A — Rollback centralizado en MembershipsService.
+    //      G15: PARTIAL_RETURN no revoca tickets ni membresía — solo
+    //      FULL_RETURN / SALE_CANCELLATION (o un partial que termine de
+    //      cubrir el total de la orden) entra al revert.
     let raffleEntriesReversed = 0;
-    if (orderRefunded && order.userId) {
-      raffleEntriesReversed = await this.reverseRaffleEntriesForOrder(
-        order.id,
-      );
-    }
-
-    // 9) Smart-auto: revertir membresía si esta era la única compra calificada
     let membershipReverted = false;
-    if (orderRefunded && order.userId && isQualifyingPurchase(orderTotal)) {
-      membershipReverted = await this.smartRevertMembership({
+    if (orderRefunded && order.userId) {
+      const revert = await this.memberships.revertPaidPurchase({
+        orderId: order.id,
         userId: order.userId,
         customerId: order.customerId,
-        excludeOrderId: order.id,
+        reverseTickets: true,
+        revertMembership: isQualifyingPurchase(orderTotal),
       });
+      raffleEntriesReversed = revert.ticketsReversed;
+      membershipReverted = revert.membershipReverted;
     }
 
     // 10) Auditoría en MembershipBenefitLog (amounts negativos)
@@ -644,123 +635,6 @@ export class PosCreditNotesService {
     return round2(
       order.creditNotes.reduce((acc, cn) => acc + Number(cn.total), 0),
     );
-  }
-
-  private async reverseRaffleEntriesForOrder(
-    orderId: string,
-  ): Promise<number> {
-    const entries = await this.prisma.raffleEntry.findMany({
-      where: {
-        orderId,
-        status: { in: [EntryStatus.PAID, EntryStatus.PENDING_PAYMENT] },
-      },
-      select: { id: true, raffleId: true, status: true },
-    });
-    if (entries.length === 0) return 0;
-
-    // Agrupar por raffle para decrementar soldTickets de forma atómica
-    const byRaffle = new Map<string, number>();
-    for (const e of entries) {
-      byRaffle.set(e.raffleId, (byRaffle.get(e.raffleId) ?? 0) + 1);
-    }
-
-    let reversed = 0;
-    for (const [raffleId, count] of byRaffle.entries()) {
-      // Cancel entries (mantenemos la fila como auditoría)
-      const updated = await this.prisma.raffleEntry.updateMany({
-        where: {
-          orderId,
-          raffleId,
-          status: { in: [EntryStatus.PAID, EntryStatus.PENDING_PAYMENT] },
-        },
-        data: { status: EntryStatus.CANCELLED },
-      });
-      reversed += updated.count;
-
-      // Decrementar soldTickets (CAS no es estrictamente necesario, decrement)
-      await this.prisma.raffle.update({
-        where: { id: raffleId },
-        data: { soldTickets: { decrement: count } },
-      });
-    }
-    return reversed;
-  }
-
-  /**
-   * Smart-auto rollback de membresía:
-   *  - Si el cliente tiene OTRA compra PAID (POS o ECOMMERCE) calificada
-   *    diferente de esta venta → solo actualiza lastPurchaseAt al máximo
-   *    de las otras y deja la membresía activa.
-   *  - Si NO hay otra compra calificada → desactiva membresía y limpia
-   *    customer.isMember / membershipExpiresAt.
-   *
-   * Retorna `true` si revirtió la membresía.
-   */
-  private async smartRevertMembership(opts: {
-    userId: string;
-    customerId: string | null;
-    excludeOrderId: string;
-  }): Promise<boolean> {
-    const otherQualifying = await this.prisma.order.findFirst({
-      where: {
-        userId: opts.userId,
-        id: { not: opts.excludeOrderId },
-        status: OrderStatus.PAID,
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true, total: true },
-    });
-
-    const hasOtherQualifying =
-      !!otherQualifying && isQualifyingPurchase(otherQualifying.total);
-
-    if (hasOtherQualifying) {
-      // Recalcular expiración basada en la última compra elegible vigente
-      const newExpires = computeNextExpiration(otherQualifying!.createdAt);
-      const now = new Date();
-      const stillActive = newExpires > now;
-      await this.prisma.membership.update({
-        where: { userId: opts.userId },
-        data: {
-          active: stillActive,
-          expiresAt: newExpires,
-          lastPurchaseAt: otherQualifying!.createdAt,
-        },
-      });
-      if (opts.customerId) {
-        await this.prisma.customer.update({
-          where: { id: opts.customerId },
-          data: {
-            isMember: stillActive,
-            membershipExpiresAt: stillActive ? newExpires : null,
-          },
-        });
-      }
-      return false;
-    }
-
-    // Era la única compra calificada → revocar
-    const existing = await this.prisma.membership.findUnique({
-      where: { userId: opts.userId },
-      select: { id: true },
-    });
-    if (existing) {
-      await this.prisma.membership.update({
-        where: { userId: opts.userId },
-        data: {
-          active: false,
-          expiresAt: new Date(),
-          lastPurchaseAt: null,
-        },
-      });
-    }
-    if (opts.customerId) {
-      await this.prisma.customer.update({
-        where: { id: opts.customerId },
-        data: { isMember: false, membershipExpiresAt: null },
-      });
-    }
-    return true;
   }
 
   private isSuperAdmin(actor: AuthenticatedUser): boolean {
@@ -892,9 +766,7 @@ export class PosCreditNotesService {
   ): Promise<ReturnableOrderDto> {
     const returnable = this.computeReturnableItems(order);
     const refundedTotal = this.sumRefundedTotal(order);
-    const fullyReturned = returnable.every(
-      (r) => r.quantityAvailable === 0,
-    );
+    const fullyReturned = returnable.every((r) => r.quantityAvailable === 0);
 
     const openSession = await this.prisma.pOSCashSession.findFirst({
       where: {
@@ -914,10 +786,7 @@ export class PosCreditNotesService {
       receiptType: order.receiptType,
       receiptSeries: order.receiptSeries,
       receiptNumber: order.receiptNumber,
-      formattedReceipt: formatReceipt(
-        order.receiptSeries,
-        order.receiptNumber,
-      ),
+      formattedReceipt: formatReceipt(order.receiptSeries, order.receiptNumber),
       createdAt: order.createdAt.toISOString(),
       refundedTotal,
       hasOpenSession: Boolean(openSession),

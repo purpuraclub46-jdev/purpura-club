@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RafflesModule } from '../raffles/raffles.module';
 import { FreePaymentProvider } from './payments/free-payment.provider';
 import { MercadoPagoPaymentProvider } from './payments/mercadopago-payment.provider';
 import { PAYMENT_PROVIDERS_TOKEN } from './payments/payment-provider.interface';
@@ -9,6 +10,9 @@ import { RaffleEntriesService } from './raffle-entries.service';
 import { RaffleEntriesRepository } from './repositories/raffle-entries.repository';
 
 @Module({
+  // F2.7-B — Importa RafflesModule para inyectar RafflePricingService como
+  // fuente única de verdad del precio de tickets (cierra G9).
+  imports: [RafflesModule],
   controllers: [RaffleEntriesController],
   providers: [
     RaffleEntriesService,
@@ -23,10 +27,18 @@ import { RaffleEntriesRepository } from './repositories/raffle-entries.repositor
         yape: YapePaymentProvider,
         mp: MercadoPagoPaymentProvider,
       ) => [free, yape, mp],
-      inject: [FreePaymentProvider, YapePaymentProvider, MercadoPagoPaymentProvider],
+      inject: [
+        FreePaymentProvider,
+        YapePaymentProvider,
+        MercadoPagoPaymentProvider,
+      ],
     },
     PaymentProviderRegistry,
   ],
-  exports: [RaffleEntriesService, RaffleEntriesRepository, PaymentProviderRegistry],
+  exports: [
+    RaffleEntriesService,
+    RaffleEntriesRepository,
+    PaymentProviderRegistry,
+  ],
 })
 export class RaffleEntriesModule {}

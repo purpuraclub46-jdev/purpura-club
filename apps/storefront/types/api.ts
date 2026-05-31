@@ -185,6 +185,22 @@ export interface RafflePrize {
   publishedAt: string | null;
 }
 
+/**
+ * F2.7-B — Bloque pricing canónico devuelto por el backend en cada Raffle.
+ * Es la fuente de verdad para el frontend; los campos legacy
+ * `ticketPrice` / `memberTicketPrice` se conservan para compatibilidad.
+ */
+export interface RafflePricing {
+  publicPrice: number;
+  memberPrice: number;
+  /** Precio que se cobraría al solicitante (member si socio, public si no). */
+  applicablePrice: number;
+  savingPercentage: number;
+  savingAmount: number;
+  isMember: boolean;
+  source: "PUBLIC" | "MEMBER";
+}
+
 export interface RaffleEntity {
   id: string;
   title: string;
@@ -192,7 +208,9 @@ export interface RaffleEntity {
   description: string;
   bannerImage: string | null;
   prizeImage: string | null;
+  /** Precio público — fuente legacy. Preferí `pricing.publicPrice`. */
   ticketPrice: number;
+  /** Precio socio derivado — fuente legacy. Preferí `pricing.memberPrice`. */
   memberTicketPrice: number;
   totalTickets: number;
   soldTickets: number;
@@ -204,6 +222,8 @@ export interface RaffleEntity {
   prizes: RafflePrize[];
   createdAt: string;
   updatedAt: string;
+  /** F2.7-B — Bloque pricing resuelto al usuario actual. Fuente canónica. */
+  pricing: RafflePricing;
 }
 
 // ─── Memberships ─────────────────────────────────────────────────────────
@@ -577,4 +597,41 @@ export interface ComplaintEntity {
   resolvedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Referrals (F2.7-C) ──────────────────────────────────────────────────
+//
+// Espejo de los DTOs en apps/api/src/modules/referrals/dto/referral-me.dto.ts.
+// El backend ofusca nombres (Pedro G.) para proteger PII (R8).
+
+export type ReferralHistoryStatus = "PENDING_PURCHASE" | "QUALIFIED";
+
+export const REFERRAL_HISTORY_STATUS_LABEL: Record<
+  ReferralHistoryStatus,
+  string
+> = {
+  PENDING_PURCHASE: "Sin compra aún",
+  QUALIFIED: "Compra válida",
+};
+
+export interface ReferralStats {
+  registered: number;
+  qualified: number;
+  ticketsEarned: number;
+}
+
+export interface ReferralHistoryItem {
+  id: string;
+  displayName: string;
+  status: ReferralHistoryStatus;
+  ticketsAwarded: number;
+  createdAt: string;
+  rewardedAt: string | null;
+}
+
+export interface ReferralOverview {
+  referralCode: string;
+  referralUrl: string;
+  stats: ReferralStats;
+  history: ReferralHistoryItem[];
 }

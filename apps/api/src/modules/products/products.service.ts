@@ -12,7 +12,10 @@ import {
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { generateUniqueSlug, slugify } from '../../common/utils/slug.util';
-import { computeProductPricing } from '../../common/utils/pricing.util';
+import {
+  computeProductPricing,
+  isProductMemberEligible,
+} from '../../common/utils/pricing.util';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductAvailabilityInputDto } from './dto/product-availability.dto';
 import {
@@ -831,7 +834,11 @@ export class ProductsService {
         discountStartsAt: product.discountStartsAt,
         discountEndsAt: product.discountEndsAt,
       },
-      { isMember: options.isMember ?? false },
+      {
+        isMember: options.isMember ?? false,
+        // F2.7-A G8 — solo JOYERIA y PERFUMES acumulan el bonus socio.
+        memberDiscountEligible: isProductMemberEligible(product.categories),
+      },
     );
 
     return {

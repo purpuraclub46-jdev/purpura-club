@@ -54,6 +54,11 @@ const registerSchema = z.object({
 
 type RegisterValues = z.infer<typeof registerSchema>;
 
+// F2.7-C — Validación del código de referido. Mismo regex que backend
+// (case-insensitive). Si NO matchea, simplemente lo ignoramos del payload —
+// el badge solo se renderiza cuando matchea, para evitar UX confuso.
+const REFERRAL_CODE_REGEX = /^PCLUB-[A-HJKMNP-Z2-9]{6}$/i;
+
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
 interface PerkSpec {
@@ -101,6 +106,18 @@ export default function RegisterPage() {
     return `/login?next=${encodeURIComponent(nextHref)}`;
   }, [nextHref]);
 
+  // F2.7-C — Captura del código de referido. Si el query param matchea el
+  // formato canónico, lo normalizamos y mostramos el badge "Te invitó alguien".
+  // Si no matchea, ignoramos silenciosamente (no asustamos al usuario).
+  // El loginHref también lo preserva para que volver al login + register
+  // mantenga la atribución.
+  const referralCode = useMemo(() => {
+    const raw = searchParams?.get("ref");
+    if (!raw) return null;
+    const normalized = raw.trim().toUpperCase();
+    return REFERRAL_CODE_REGEX.test(normalized) ? normalized : null;
+  }, [searchParams]);
+
   const {
     register,
     handleSubmit,
@@ -112,7 +129,12 @@ export default function RegisterPage() {
 
   const onSubmit = handleSubmit(async (values) => {
     try {
-      await reg.mutateAsync(values);
+      await reg.mutateAsync({
+        ...values,
+        // F2.7-C — Solo enviamos referralCode si pasó validación de formato.
+        // Backend hace soft-fail si no existe (R1).
+        ...(referralCode ? { referralCode } : {}),
+      });
       toast.success("¡Bienvenida al Club Púrpura!");
       router.replace(nextHref);
     } catch (error) {
@@ -258,6 +280,29 @@ export default function RegisterPage() {
               Acumula puntos, gana tickets y vive Purpura Club.
             </p>
           </div>
+
+          {/* F2.7-C — Badge de referido. Sólo se renderiza si `?ref=` tiene
+              formato válido. El código se envía como hidden field al submit. */}
+          {referralCode ? (
+            <div className="flex items-start gap-3 rounded-2xl border border-[#9810FA]/25 bg-[#9810FA]/5 p-3.5">
+              <Gift
+                className="mt-0.5 size-4 shrink-0 text-[#9810FA]"
+                strokeWidth={1.6}
+              />
+              <div className="space-y-0.5">
+                <p className="text-[12px] font-medium text-[#0A0A0A]">
+                  Te invitó alguien especial
+                </p>
+                <p className="text-[11px] leading-relaxed text-[#0A0A0A]/65">
+                  Cuando hagas tu primera compra de S/25 o más, tu amigo recibirá
+                  un ticket de sorteo.
+                </p>
+                <p className="pt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[#9810FA]">
+                  {referralCode}
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           <form onSubmit={onSubmit} className="space-y-4" noValidate>
             <div className="grid gap-3 sm:grid-cols-2">

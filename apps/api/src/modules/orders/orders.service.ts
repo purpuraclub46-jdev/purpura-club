@@ -6,13 +6,10 @@ import {
 } from '@nestjs/common';
 import {
   CustomerDocumentType,
-  EntryStatus,
-  EntryType,
   InventoryMovementType,
-  MembershipBenefitType,
+  OrderChannel,
   OrderStatus,
   Prisma,
-  RaffleStatus,
   ReceiptSeriesType,
   SunatStatus,
 } from '@prisma/client';
@@ -21,7 +18,10 @@ import {
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
-import { computeProductPricing } from '../../common/utils/pricing.util';
+import {
+  computeProductPricing,
+  isProductMemberEligible,
+} from '../../common/utils/pricing.util';
 import { validateDocument } from '../fiscal/document-validators';
 import { FiscalConfigService } from '../fiscal/fiscal-config.service';
 import {
@@ -30,13 +30,8 @@ import {
   lineBreakdownGross,
 } from '../fiscal/fiscal.util';
 import { MembershipsService } from '../memberships/memberships.service';
-import { computePurchaseEntries } from '../memberships/membership.helpers';
 import { ReceiptsService } from '../receipts/receipts.service';
-import { ReferralsService } from '../referrals/referrals.service';
-import {
-  CreateOrderDto,
-  OrderCustomerFiscalDto,
-} from './dto/create-order.dto';
+import { CreateOrderDto, OrderCustomerFiscalDto } from './dto/create-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import {
   OrderFiscalSnapshotDto,
@@ -60,7 +55,6 @@ export class OrdersService {
     private readonly repository: OrdersRepository,
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
-    private readonly referrals: ReferralsService,
     private readonly receipts: ReceiptsService,
     private readonly fiscalConfig: FiscalConfigService,
   ) {}
@@ -97,6 +91,11 @@ export class OrdersService {
         discountActive: true,
         discountStartsAt: true,
         discountEndsAt: true,
+        // F2.7-A G8 — pricing engine necesita el grupo de categoría para
+        // decidir si aplica el bonus 10 % de socio (Joyería / Perfumes).
+        categories: {
+          select: { category: { select: { group: true } } },
+        },
       },
     });
 
@@ -154,7 +153,10 @@ export class OrdersService {
           discountStartsAt: product.discountStartsAt,
           discountEndsAt: product.discountEndsAt,
         },
-        { isMember },
+        {
+          isMember,
+          memberDiscountEligible: isProductMemberEligible(product.categories),
+        },
       );
 
       const unitPriceNum =
@@ -317,8 +319,8 @@ export class OrdersService {
     const documentNumber =
       dtoFiscal?.documentNumber ??
       (documentType === CustomerDocumentType.RUC
-        ? customer?.ruc ?? null
-        : customer?.dni ?? null);
+        ? (customer?.ruc ?? null)
+        : (customer?.dni ?? null));
     const legalName =
       dtoFiscal?.legalName ?? customer?.legalName ?? customer?.fullName ?? null;
     const fiscalAddress =
@@ -336,7 +338,10 @@ export class OrdersService {
           'Para emitir FACTURA, el RUC del cliente es obligatorio',
         );
       }
-      const rucError = validateDocument(CustomerDocumentType.RUC, documentNumber);
+      const rucError = validateDocument(
+        CustomerDocumentType.RUC,
+        documentNumber,
+      );
       if (rucError) throw new BadRequestException(rucError);
       if (!legalName) {
         throw new BadRequestException(
@@ -441,24 +446,35 @@ export class OrdersService {
 
     const updated = order;
 
-    // Membership Engine: lo disparamos fire-and-forget en el siguiente tick
-    // para garantizar que la respuesta HTTP del pedido salga rápido y para
-    // que el motor corra fuera del ciclo de la conexión del request.
-    // Cada paso es idempotente y resistente a fallos parciales (ver
-    // `processMembershipBenefits`).
+    // F2.7-A — Punto de entrada UNIFICADO al Membership Engine. Fire-and-forget
+    // en el siguiente tick para que la respuesta HTTP del pedido salga rápido
+    // y el motor corra fuera del ciclo de conexión del request.
     if (!wasPaid && willBePaid && updated.userId) {
+      const orderId = updated.id;
+      const orderNumber = updated.number;
+      const userId = updated.userId;
+      const customerId = updated.customerId;
+      const total = updated.total;
+      // F2.7-C / R6 — capturamos createdAt para que el guard anti late-linkage
+      // pueda comparar con `Referral.createdAt`.
+      const orderCreatedAt = updated.createdAt;
       setImmediate(() => {
-        void this.processMembershipBenefits({
-          orderId: updated.id,
-          orderNumber: updated.number,
-          userId: updated.userId as string,
-          totalAmount: updated.total,
-          paidAt: new Date(),
-        }).catch((error) =>
-          this.logger.error(
-            `Membership engine failed for order ${updated.number}: ${String(error)}`,
-          ),
-        );
+        void this.memberships
+          .applyPaidPurchase({
+            userId,
+            customerId,
+            orderId,
+            orderNumber,
+            totalAmount: total,
+            paidAt: new Date(),
+            channel: OrderChannel.ECOMMERCE,
+            orderCreatedAt,
+          })
+          .catch((error) =>
+            this.logger.error(
+              `Membership engine failed for order ${orderNumber}: ${String(error)}`,
+            ),
+          );
       });
     }
 
@@ -614,156 +630,6 @@ export class OrdersService {
     };
   }
 
-  /**
-   * Núcleo del Membership Engine cuando un pedido cambia a PAID.
-   *
-   * Se ejecuta DESPUÉS del commit de la transacción de inventario para
-   * evitar transacciones largas en pgbouncer (Supabase). Cada paso es
-   * idempotente:
-   *   - membresía: upsert por userId
-   *   - participaciones: el "lock" lo da raffle.updateMany con WHERE
-   *     soldTickets=N para evitar dobles
-   *   - referral: updateMany WHERE rewarded=false atómico
-   */
-  private async processMembershipBenefits(args: {
-    orderId: string;
-    orderNumber: string;
-    userId: string;
-    totalAmount: Prisma.Decimal | number;
-    paidAt: Date;
-  }): Promise<void> {
-    const { orderId, orderNumber, userId, paidAt } = args;
-    const totalNumber =
-      args.totalAmount instanceof Prisma.Decimal
-        ? args.totalAmount.toNumber()
-        : Number(args.totalAmount);
-
-    const { membership, renewed } = await this.memberships.activateOrRenew({
-      userId,
-      purchaseAmount: totalNumber,
-      purchaseAt: paidAt,
-    });
-
-    if (!membership) {
-      // Compra por debajo del mínimo: no hay beneficios.
-      return;
-    }
-
-    await this.memberships.logBenefit({
-      userId,
-      orderId,
-      type: MembershipBenefitType.DISCOUNT,
-      description: renewed
-        ? `Membresía renovada por compra ${orderNumber}`
-        : `Membresía activada por compra ${orderNumber}`,
-      amount: totalNumber,
-    });
-
-    // Participaciones automáticas por cada S/25 consumidos.
-    const entriesQty = computePurchaseEntries(totalNumber);
-    if (entriesQty > 0) {
-      const granted = await this.grantPurchaseEntries(
-        userId,
-        entriesQty,
-        orderNumber,
-      );
-      if (granted > 0) {
-        await this.memberships.logBenefit({
-          userId,
-          orderId,
-          type: MembershipBenefitType.RAFFLE_ENTRY,
-          description: `${granted} participación(es) automática(s) por compra ${orderNumber}`,
-          amount: granted,
-        });
-      }
-    }
-
-    // Recompensa al referente (BONUS entry) cuando el referido hace su
-    // primera compra elegible.
-    const claim = await this.referrals.claimRewardForFirstPurchase({
-      referredUserId: userId,
-    });
-    if (claim) {
-      const grantedBonus = await this.grantPurchaseEntries(
-        claim.referrerUserId,
-        1,
-        `referido ${orderNumber}`,
-        EntryType.BONUS,
-      );
-      if (grantedBonus > 0) {
-        await this.memberships.logBenefit({
-          userId: claim.referrerUserId,
-          orderId,
-          type: MembershipBenefitType.REFERRAL_BONUS,
-          description: `Bono por referido (pedido ${orderNumber})`,
-          amount: grantedBonus,
-        });
-      }
-    }
-  }
-
-  /**
-   * Concede `quantity` participaciones al `userId` sobre el sorteo PUBLISHED
-   * activo más próximo a finalizar. Usa `raffle.updateMany` con CAS sobre
-   * `soldTickets` para evitar dobles en concurrencia.
-   */
-  private async grantPurchaseEntries(
-    userId: string,
-    quantity: number,
-    reference: string,
-    entryType: EntryType = EntryType.PURCHASE_REWARD,
-  ): Promise<number> {
-    if (quantity <= 0) return 0;
-
-    const now = new Date();
-    const raffle = await this.prisma.raffle.findFirst({
-      where: {
-        status: RaffleStatus.PUBLISHED,
-        endDate: { gt: now },
-      },
-      orderBy: { endDate: 'asc' },
-    });
-    if (!raffle) {
-      this.logger.log(
-        `No active raffle — purchase entries for ${userId} skipped (${reference})`,
-      );
-      return 0;
-    }
-
-    const seatsLeft = raffle.totalTickets - raffle.soldTickets;
-    const toGrant = Math.min(quantity, seatsLeft);
-    if (toGrant <= 0) return 0;
-
-    const reservation = await this.prisma.raffle.updateMany({
-      where: {
-        id: raffle.id,
-        status: RaffleStatus.PUBLISHED,
-        soldTickets: raffle.soldTickets,
-        totalTickets: { gte: raffle.soldTickets + toGrant },
-      },
-      data: { soldTickets: { increment: toGrant } },
-    });
-    if (reservation.count === 0) {
-      return 0;
-    }
-
-    for (let i = 0; i < toGrant; i += 1) {
-      const ticketNumber = raffle.soldTickets + i + 1;
-      await this.prisma.raffleEntry.create({
-        data: {
-          userId,
-          raffleId: raffle.id,
-          ticketNumber,
-          type: entryType,
-          status: EntryStatus.PAID,
-          paymentReference: `auto-${reference}`,
-        },
-      });
-    }
-
-    return toGrant;
-  }
-
   private async allocateOrderNumber(): Promise<string> {
     let attempts = 0;
     while (attempts < 5) {
@@ -773,7 +639,9 @@ export class OrdersService {
       }
       attempts += 1;
     }
-    throw new BadRequestException('No se pudo generar un número de pedido único');
+    throw new BadRequestException(
+      'No se pudo generar un número de pedido único',
+    );
   }
 
   private decimalToNumber(value: Prisma.Decimal | number | string): number {
@@ -799,9 +667,7 @@ export class OrdersService {
     };
 
     const receipt: OrderReceiptDto | null =
-      order.receiptType &&
-      order.receiptSeries &&
-      order.receiptNumber !== null
+      order.receiptType && order.receiptSeries && order.receiptNumber !== null
         ? {
             type: order.receiptType,
             series: order.receiptSeries,

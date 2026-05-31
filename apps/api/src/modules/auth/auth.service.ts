@@ -12,6 +12,7 @@ import {
   User,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralsService } from '../referrals/referrals.service';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { CustomerProfileSummaryDto } from './dto/customer-profile-summary.dto';
 import { LoginDto } from './dto/login.dto';
@@ -67,6 +68,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly passwordHelper: PasswordHelper,
     private readonly tokenHelper: TokenHelper,
+    private readonly referrals: ReferralsService,
   ) {}
 
   /**
@@ -134,8 +136,41 @@ export class AuthService {
 
     const passwordHash = await this.passwordHelper.hash(dto.password);
 
+    // F2.7-C — Resolución del referrer FUERA del TX (lectura idempotente).
+    // R1: si el código no matchea ningún user existente, NO bloqueamos el
+    // registro. Solo logueamos warning y procedemos sin linkage.
+    //
+    // Importante: el lookup vive fuera del TX porque (a) es una lectura
+    // pura y (b) un error aquí no debe abortar la creación del User. Si
+    // el lookup tira (DB caída), tratamos como código inválido y seguimos.
+    let referrerUserId: string | null = null;
+    if (dto.referralCode) {
+      try {
+        const referrer = await this.prisma.user.findUnique({
+          where: { referralCode: dto.referralCode },
+          select: { id: true },
+        });
+        if (referrer) {
+          referrerUserId = referrer.id;
+        } else {
+          this.logger.warn(
+            `[auth.register] Referral code "${dto.referralCode}" not found — registering without linkage (R1)`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          `[auth.register] Referral lookup failed for "${dto.referralCode}": ${String(error)} — proceeding without linkage`,
+        );
+      }
+    }
+
     try {
-      const createdUserId = await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx) => {
+        // F2.7-C — Generamos el código del nuevo user DENTRO del TX para
+        // garantizar unicidad incluso bajo concurrencia. Si la colisión
+        // agota intentos, el throw rebobina el TX (no queda User huérfano).
+        const referralCode = await this.referrals.generateReferralCode(tx);
+
         // 1. Crear User
         const user = await tx.user.create({
           data: {
@@ -145,9 +180,26 @@ export class AuthService {
             lastName: dto.lastName,
             dni: dto.dni ?? null,
             role: Role.USER,
+            referralCode,
+            // F2.7-C — Mantenemos la FK denormalizada por compatibilidad
+            // con queries existentes. La fuente de verdad para premiar
+            // sigue siendo el modelo Referral.
+            referredByUserId: referrerUserId,
           },
           select: { id: true },
         });
+
+        // F2.7-C — Linkage atómico con el referrer (si vino código válido).
+        // R10 — first wins: si el usuario ya tuviera un Referral previo
+        // (imposible aquí porque acaba de crearse), no se sobrescribiría.
+        // Anti-self-referral cubierto en ReferralsService.link().
+        if (referrerUserId) {
+          await this.referrals.link({
+            referrerUserId,
+            referredUserId: user.id,
+            tx,
+          });
+        }
 
         // 2. Buscar Customer huérfano por DNI (solo si DNI provisto).
         //    Político: SOLO match por DNI. Email/phone no se usan para dedupe.

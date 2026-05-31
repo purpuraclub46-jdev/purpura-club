@@ -7,7 +7,12 @@ const productInclude = Prisma.validator<Prisma.ProductInclude>()({
   variants: { orderBy: { name: 'asc' } },
   categories: {
     include: {
-      category: { select: { id: true, name: true, slug: true } },
+      // `group` se incluye para que el pricing engine pueda determinar
+      // elegibilidad del beneficio de socio (F2.7-A G8 — solo JOYERIA y
+      // PERFUMES acumulan el 10 % adicional sobre la promoción).
+      category: {
+        select: { id: true, name: true, slug: true, group: true },
+      },
     },
   },
   availability: {

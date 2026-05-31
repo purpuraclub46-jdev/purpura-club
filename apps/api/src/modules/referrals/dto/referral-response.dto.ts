@@ -22,8 +22,7 @@ export class ReferralResponseDto {
   referred!: ReferralUserRefDto;
 
   @ApiProperty({
-    description:
-      'true cuando el referido ya hizo su primera compra elegible.',
+    description: 'true cuando el referido ya hizo su primera compra elegible.',
   })
   rewarded!: boolean;
 

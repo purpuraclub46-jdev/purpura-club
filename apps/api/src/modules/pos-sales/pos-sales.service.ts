@@ -8,23 +8,20 @@ import {
 } from '@nestjs/common';
 import {
   CustomerDocumentType,
-  EntryStatus,
-  EntryType,
   InventoryLocationType,
   InventoryMovementType,
-  MembershipBenefitType,
   OrderChannel,
-  OrderPaymentMethod,
   OrderStatus,
   POSCashSessionStatus,
-  PaymentMethod,
   Prisma,
-  RaffleStatus,
   ReceiptSeriesType,
   SunatStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { computeProductPricing } from '../../common/utils/pricing.util';
+import {
+  computeProductPricing,
+  isProductMemberEligible,
+} from '../../common/utils/pricing.util';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { validateDocument } from '../fiscal/document-validators';
 import { FiscalConfigService } from '../fiscal/fiscal-config.service';
@@ -33,12 +30,7 @@ import {
   formatReceiptNumber,
   lineBreakdownGross,
 } from '../fiscal/fiscal.util';
-import {
-  calculateMembershipStatus,
-  computeNextExpiration,
-  computePurchaseEntries,
-  isQualifyingPurchase,
-} from '../memberships/membership.helpers';
+import { MembershipsService } from '../memberships/memberships.service';
 import { generateOrderNumber } from '../orders/helpers/order-number.helper';
 import { PosCashService } from '../pos-cash/pos-cash.service';
 import { ReceiptsService } from '../receipts/receipts.service';
@@ -92,6 +84,7 @@ export class PosSalesService {
     private readonly posCash: PosCashService,
     private readonly receipts: ReceiptsService,
     private readonly fiscalConfig: FiscalConfigService,
+    private readonly memberships: MembershipsService,
   ) {}
 
   /**
@@ -172,6 +165,11 @@ export class PosSalesService {
           discountActive: true,
           discountStartsAt: true,
           discountEndsAt: true,
+          // F2.7-A G8 — pricing engine necesita el grupo de categoría para
+          // aplicar el bonus socio solo en Joyería / Perfumes.
+          categories: {
+            select: { category: { select: { group: true } } },
+          },
         },
       }),
       this.prisma.inventoryStock.findMany({
@@ -217,16 +215,10 @@ export class PosSalesService {
       throw new BadRequestException('Cliente no encontrado');
     }
 
-    // 3) Determinar membresía
-    let isMember = false;
-    if (customer?.userId) {
-      const m = await this.prisma.membership.findUnique({
-        where: { userId: customer.userId },
-        select: { active: true, expiresAt: true },
-      });
-      const status = calculateMembershipStatus(m);
-      isMember = status.active;
-    }
+    // 3) Determinar membresía — única fuente de verdad: MembershipsService.
+    const isMember = customer?.userId
+      ? await this.memberships.isActive(customer.userId)
+      : false;
 
     // 4) Stock map + cálculo de líneas con desglose IGV (precios CON IGV)
     const stockMap = new Map(stocks.map((s) => [s.productId, s]));
@@ -249,7 +241,10 @@ export class PosSalesService {
 
     for (const item of dto.items) {
       const product = productMap.get(item.productId)!;
-      const pricing = computeProductPricing(product, { isMember });
+      const pricing = computeProductPricing(product, {
+        isMember,
+        memberDiscountEligible: isProductMemberEligible(product.categories),
+      });
       const stockRow = stockMap.get(item.productId);
       const available = stockRow ? stockRow.stock - stockRow.reservedStock : 0;
       if (available < item.quantity) {
@@ -367,8 +362,7 @@ export class PosSalesService {
           type: issued.type,
           series: issued.series,
           number: issued.number,
-          formatted:
-            formatReceiptNumber(issued.series, issued.number) ?? '',
+          formatted: formatReceiptNumber(issued.series, issued.number) ?? '',
           issuedAt: issuedAt.toISOString(),
           sunatStatus: SunatStatus.PENDING,
         };
@@ -444,19 +438,27 @@ export class PosSalesService {
       actor,
     });
 
-    // 11) Membership + raffle entries (fire-and-forget, no aborta la venta)
+    // 11) F2.7-A — Punto único de entrada al Membership Engine. Cubre
+    //     activate/renew, sync Customer.isMember, tickets PURCHASE_REWARD,
+    //     bono al referente y envío de email de bienvenida. Idempotente y
+    //     resistente a fallos parciales — un error aquí no aborta la venta
+    //     ni revierte caja/stock.
     let raffleEntriesGenerated = 0;
-    let membershipDiscountApplied = isMember;
-    if (customer?.userId && isQualifyingPurchase(total)) {
+    const membershipDiscountApplied = isMember;
+    if (customer?.userId) {
       try {
-        const result = await this.processMembershipAndRaffle({
+        const result = await this.memberships.applyPaidPurchase({
           userId: customer.userId,
           customerId: customer.id,
           orderId: order.id,
-          orderTotal: total,
+          orderNumber: order.number,
+          totalAmount: total,
+          paidAt: order.createdAt,
+          channel: OrderChannel.POS,
+          // F2.7-C / R6 — paidAt y createdAt coinciden en POS (venta instantánea).
+          orderCreatedAt: order.createdAt,
         });
-        raffleEntriesGenerated = result.raffleEntries;
-        membershipDiscountApplied = isMember;
+        raffleEntriesGenerated = result.ticketsGranted;
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(
@@ -469,102 +471,15 @@ export class PosSalesService {
       `Venta POS ${order.number} en ${locationId} por S/${total.toFixed(2)} (cajero ${actor.id})`,
     );
 
-    return this.toResponse(order, receipt, raffleEntriesGenerated, membershipDiscountApplied);
+    return this.toResponse(
+      order,
+      receipt,
+      raffleEntriesGenerated,
+      membershipDiscountApplied,
+    );
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────
-
-  private async processMembershipAndRaffle(opts: {
-    userId: string;
-    customerId: string;
-    orderId: string;
-    orderTotal: number;
-  }): Promise<{ raffleEntries: number }> {
-    const now = new Date();
-
-    // Renovar / activar membresía
-    const existing = await this.prisma.membership.findUnique({
-      where: { userId: opts.userId },
-      select: { active: true, expiresAt: true },
-    });
-    const newExpires = existing?.active && existing.expiresAt > now
-      ? computeNextExpiration(existing.expiresAt)
-      : computeNextExpiration(now);
-
-    await this.prisma.membership.upsert({
-      where: { userId: opts.userId },
-      create: {
-        userId: opts.userId,
-        active: true,
-        startedAt: now,
-        expiresAt: newExpires,
-        lastPurchaseAt: now,
-      },
-      update: {
-        active: true,
-        expiresAt: newExpires,
-        lastPurchaseAt: now,
-      },
-    });
-
-    // Sync customer.isMember
-    await this.prisma.customer.update({
-      where: { id: opts.customerId },
-      data: { isMember: true, membershipExpiresAt: newExpires },
-    });
-
-    // Generar raffle entries automáticas (PURCHASE_REWARD) en sorteos PUBLISHED
-    const ticketsToGrant = computePurchaseEntries(opts.orderTotal);
-    if (ticketsToGrant <= 0) return { raffleEntries: 0 };
-
-    const activeRaffle = await this.prisma.raffle.findFirst({
-      where: {
-        status: RaffleStatus.PUBLISHED,
-        startDate: { lte: now },
-        endDate: { gte: now },
-      },
-      orderBy: { startDate: 'desc' },
-      select: { id: true, soldTickets: true, totalTickets: true },
-    });
-    if (!activeRaffle) return { raffleEntries: 0 };
-
-    const available = activeRaffle.totalTickets - activeRaffle.soldTickets;
-    const grant = Math.min(ticketsToGrant, available);
-    if (grant <= 0) return { raffleEntries: 0 };
-
-    // Reserva el rango con CAS sobre soldTickets
-    const reserved = await this.prisma.raffle.updateMany({
-      where: { id: activeRaffle.id, soldTickets: activeRaffle.soldTickets },
-      data: { soldTickets: activeRaffle.soldTickets + grant },
-    });
-    if (reserved.count !== 1) return { raffleEntries: 0 };
-
-    const startNumber = activeRaffle.soldTickets + 1;
-    await this.prisma.raffleEntry.createMany({
-      data: Array.from({ length: grant }, (_, i) => ({
-        userId: opts.userId,
-        raffleId: activeRaffle.id,
-        ticketNumber: startNumber + i,
-        type: EntryType.PURCHASE_REWARD,
-        status: EntryStatus.PAID,
-        paymentMethod: PaymentMethod.FREE,
-        orderId: opts.orderId,
-      })),
-      skipDuplicates: true,
-    });
-
-    await this.prisma.membershipBenefitLog.create({
-      data: {
-        userId: opts.userId,
-        orderId: opts.orderId,
-        type: MembershipBenefitType.RAFFLE_ENTRY,
-        description: `${grant} participación(es) generada(s) por venta POS`,
-        amount: new Prisma.Decimal(grant),
-      },
-    });
-
-    return { raffleEntries: grant };
-  }
 
   /**
    * Resuelve el snapshot fiscal del cliente para esta venta combinando:
@@ -604,8 +519,8 @@ export class PosSalesService {
     const documentNumber =
       dtoFiscal?.documentNumber ??
       (documentType === CustomerDocumentType.RUC
-        ? customer?.ruc ?? null
-        : customer?.dni ?? null);
+        ? (customer?.ruc ?? null)
+        : (customer?.dni ?? null));
     const legalName =
       dtoFiscal?.legalName ?? customer?.legalName ?? customer?.fullName ?? null;
     const fiscalAddress =
@@ -623,7 +538,10 @@ export class PosSalesService {
           'Para emitir FACTURA, el RUC del cliente es obligatorio',
         );
       }
-      const rucError = validateDocument(CustomerDocumentType.RUC, documentNumber);
+      const rucError = validateDocument(
+        CustomerDocumentType.RUC,
+        documentNumber,
+      );
       if (rucError) throw new BadRequestException(rucError);
       if (!legalName) {
         throw new BadRequestException(
@@ -711,9 +629,7 @@ export class PosSalesService {
 
     const resolvedReceipt: PosSaleReceiptDto | null =
       receipt ??
-      (order.receiptSeries &&
-      order.receiptNumber !== null &&
-      order.receiptType
+      (order.receiptSeries && order.receiptNumber !== null && order.receiptType
         ? {
             type: order.receiptType,
             series: order.receiptSeries,

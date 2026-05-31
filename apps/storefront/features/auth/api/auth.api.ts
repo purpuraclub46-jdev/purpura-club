@@ -19,6 +19,12 @@ export interface RegisterPayload {
   password: string;
   firstName: string;
   lastName: string;
+  /**
+   * F2.7-C — Código de referido capturado de `?ref=` en /register. Opcional.
+   * Si el código es inválido o no existe, el backend hace soft-fail (R1) y
+   * el registro continúa sin linkage. El front simplemente lo reenvía tal cual.
+   */
+  referralCode?: string;
 }
 
 export interface ForgotPasswordPayload {

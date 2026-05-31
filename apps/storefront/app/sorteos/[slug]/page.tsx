@@ -63,7 +63,8 @@ export default function SorteoDetailPage({ params }: PageProps) {
       ? Math.min(100, (data.soldTickets / data.totalTickets) * 100)
       : 0;
   const cover = data.bannerImage ?? data.prizeImage;
-  const ticketPrice = data.memberTicketPrice ?? data.ticketPrice;
+  // F2.7-B — fuente única: el bloque `pricing` resuelto server-side.
+  const { pricing } = data;
 
   const handleJoin = () => {
     if (!isAuthenticated) {
@@ -185,11 +186,7 @@ export default function SorteoDetailPage({ params }: PageProps) {
                 />
               </div>
               <div className="mt-6 grid grid-cols-3 gap-3">
-                <Stat
-                  icon={Ticket}
-                  label="Ticket desde"
-                  value={formatCurrency(ticketPrice)}
-                />
+                <TicketPriceStat pricing={pricing} />
                 <Stat
                   icon={Sparkles}
                   label="Vendidos"
@@ -308,14 +305,16 @@ export default function SorteoDetailPage({ params }: PageProps) {
               </ul>
             </div>
 
+            <PricingCallout pricing={pricing} />
+
             <div className="rounded-2xl border border-[#9810FA]/30 bg-[#9810FA]/12 p-6">
               <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#c026d3]">
                 Tip miembro
               </p>
               <p className="mt-2 text-sm text-white/85">
-                Los miembros activos reciben tickets dobles en sorteos
-                seleccionados. Activa tu membresía gratis y multiplica tus
-                probabilidades.
+                Los miembros activos reciben tickets automáticos por cada S/25
+                de compra en la tienda. Multiplica tus probabilidades sin pagar
+                de más.
               </p>
               <Link href="/register" className="mt-4 inline-block">
                 <Button variant="accent" size="sm">
@@ -348,6 +347,118 @@ function Stat({
       <p className="mt-1 text-sm font-semibold tabular-nums text-white">
         {value}
       </p>
+    </div>
+  );
+}
+
+/**
+ * F2.7-B — Stat hero del ticket que adapta su contenido al usuario:
+ *   - Socio activo: muestra el precio socio en grande + público tachado.
+ *   - Anónimo / no socio: muestra el precio público + sublínea con el
+ *     precio socio disponible (decisión D3 del cliente).
+ */
+function TicketPriceStat({
+  pricing,
+}: {
+  pricing: NonNullable<import("@/types/api").RaffleEntity["pricing"]>;
+}) {
+  const hasDiscount = pricing.memberPrice < pricing.publicPrice;
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55">
+        <Ticket className="size-3 text-[#c026d3]" />
+        Ticket desde
+      </div>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <p className="text-sm font-semibold tabular-nums text-white">
+          {formatCurrency(pricing.applicablePrice)}
+        </p>
+        {pricing.isMember && hasDiscount ? (
+          <span className="text-[10px] font-medium tabular-nums text-white/45 line-through">
+            {formatCurrency(pricing.publicPrice)}
+          </span>
+        ) : null}
+      </div>
+      {pricing.isMember && hasDiscount ? (
+        <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c026d3]">
+          −{pricing.savingPercentage}% socio
+        </p>
+      ) : hasDiscount ? (
+        <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+          Socios pagan {formatCurrency(pricing.memberPrice)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * F2.7-B — Callout lateral con el comparativo de precios.
+ * Decisión D2: a anónimos / no socios mostramos CTA
+ * "Activa tu membresía y paga S/X".
+ * Decisión D3: el precio socio se exhibe siempre, también a no socios.
+ */
+function PricingCallout({
+  pricing,
+}: {
+  pricing: NonNullable<import("@/types/api").RaffleEntity["pricing"]>;
+}) {
+  const hasDiscount = pricing.memberPrice < pricing.publicPrice;
+  if (!hasDiscount) {
+    return null;
+  }
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#9810FA]">
+        <Crown className="size-3" />
+        Precio del ticket
+      </p>
+      <div className="mt-4 space-y-2 text-sm text-white/85">
+        <div className="flex items-baseline justify-between">
+          <span className="text-white/65">Precio público</span>
+          <span
+            className={`tabular-nums ${
+              pricing.isMember ? "text-white/45 line-through" : "text-white"
+            }`}
+          >
+            {formatCurrency(pricing.publicPrice)}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between">
+          <span className="text-[#c026d3]">Precio socio</span>
+          <span
+            className={`tabular-nums ${
+              pricing.isMember
+                ? "text-base font-semibold text-white"
+                : "text-white"
+            }`}
+          >
+            {formatCurrency(pricing.memberPrice)}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between text-xs text-white/55">
+          <span>Ahorro</span>
+          <span className="tabular-nums">
+            {pricing.savingPercentage}% ·{" "}
+            {formatCurrency(pricing.savingAmount)}
+          </span>
+        </div>
+      </div>
+      {pricing.isMember ? (
+        <p className="mt-4 text-xs text-white/65">
+          Activo en Púrpura Club. Pagas{" "}
+          <strong className="text-white">
+            {formatCurrency(pricing.memberPrice)}
+          </strong>{" "}
+          por ticket.
+        </p>
+      ) : (
+        <Link href="/register" className="mt-4 block">
+          <Button variant="accent" size="sm" className="w-full">
+            Activa tu membresía y paga {formatCurrency(pricing.memberPrice)}
+          </Button>
+        </Link>
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AUTH_CONFIG_KEY, AuthConfig } from '../../config/auth.config';
+import { ReferralsModule } from '../referrals/referrals.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -15,6 +16,9 @@ import { JWT_STRATEGY_NAME, JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     ConfigModule,
+    // F2.7-C — AuthService.register necesita ReferralsService para generar
+    // el código del nuevo user y crear el linkage con el referrer.
+    ReferralsModule,
     PassportModule.register({
       defaultStrategy: JWT_STRATEGY_NAME,
       session: false,
@@ -59,6 +63,12 @@ import { JWT_STRATEGY_NAME, JwtStrategy } from './strategies/jwt.strategy';
       useClass: RolesGuard,
     },
   ],
-  exports: [AuthService, PasswordHelper, TokenHelper, JwtModule, PassportModule],
+  exports: [
+    AuthService,
+    PasswordHelper,
+    TokenHelper,
+    JwtModule,
+    PassportModule,
+  ],
 })
 export class AuthModule {}

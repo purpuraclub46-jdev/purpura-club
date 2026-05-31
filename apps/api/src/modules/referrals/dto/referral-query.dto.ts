@@ -36,7 +36,9 @@ export class ReferralQueryDto {
   @IsBoolean()
   rewarded?: boolean;
 
-  @ApiPropertyOptional({ description: 'Búsqueda por email del referente o referido' })
+  @ApiPropertyOptional({
+    description: 'Búsqueda por email del referente o referido',
+  })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()

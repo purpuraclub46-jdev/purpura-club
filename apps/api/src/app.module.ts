@@ -33,6 +33,7 @@ import { PosSalesModule } from './modules/pos-sales/pos-sales.module';
 import { ProductsModule } from './modules/products/products.module';
 import { RaffleEntriesModule } from './modules/raffle-entries/raffle-entries.module';
 import { RafflePrizesModule } from './modules/raffle-prizes/raffle-prizes.module';
+import { RaffleTicketsModule } from './modules/raffle-tickets/raffle-tickets.module';
 import { RafflesModule } from './modules/raffles/raffles.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { ReceiptsModule } from './modules/receipts/receipts.module';
@@ -57,8 +58,9 @@ import { PrismaModule } from './prisma/prisma.module';
     RbacModule,
     UsersModule,
     EmailsModule,
-    MembershipsModule,
     ReferralsModule,
+    RaffleTicketsModule,
+    MembershipsModule,
     RafflesModule,
     RaffleEntriesModule,
     RafflePrizesModule,

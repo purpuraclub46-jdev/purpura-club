@@ -26,9 +26,11 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { OptionalCurrentUser } from '../auth/decorators/optional-current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import {
   AdminRaffleQueryDto,
@@ -47,25 +49,39 @@ import { RafflesService } from './raffles.service';
 export class RafflesController {
   constructor(private readonly rafflesService: RafflesService) {}
 
-  // ───── Public ─────
+  // ───── Public (optional auth) ─────
+  //
+  // F2.7-B — Estos endpoints son públicos pero ahora extraen el `userId`
+  // del JWT cuando está presente (OptionalJwtAuthGuard NO bloquea si falta
+  // el token). Esto permite que el bloque `pricing` se resuelva con
+  // membresía activa para socios autenticados, sin perder accesibilidad
+  // para visitantes anónimos.
 
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'List published public raffles' })
   @ApiOkResponse({ type: PaginatedRafflesResponseDto })
-  listPublic(@Query() query: RaffleQueryDto) {
-    return this.rafflesService.findPublic(query);
+  listPublic(
+    @Query() query: RaffleQueryDto,
+    @OptionalCurrentUser('id') userId?: string,
+  ) {
+    return this.rafflesService.findPublic(query, userId ?? null);
   }
 
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get('slug/:slug')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get a published raffle by slug' })
   @ApiOkResponse({ type: RaffleResponseDto })
   @ApiNotFoundResponse({ description: 'Raffle not found' })
-  getBySlug(@Param('slug') slug: string) {
-    return this.rafflesService.findBySlugPublic(slug);
+  getBySlug(
+    @Param('slug') slug: string,
+    @OptionalCurrentUser('id') userId?: string,
+  ) {
+    return this.rafflesService.findBySlugPublic(slug, userId ?? null);
   }
 
   // ───── Admin ─────
@@ -119,10 +135,7 @@ export class RafflesController {
   @ApiOkResponse({ type: RaffleResponseDto })
   @ApiNotFoundResponse()
   @ApiBadRequestResponse()
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateRaffleDto,
-  ) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateRaffleDto) {
     return this.rafflesService.update(id, dto);
   }
 

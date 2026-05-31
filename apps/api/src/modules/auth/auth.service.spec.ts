@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralsService } from '../referrals/referrals.service';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { PasswordHelper } from './helpers/password.helper';
@@ -148,6 +149,10 @@ describe('AuthService.register — FASE 1 atomic register', () => {
     verifyRefreshToken: jest.Mock;
     compareRefreshToken: jest.Mock;
   };
+  let referrals: {
+    generateReferralCode: jest.Mock;
+    link: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createPrismaMock();
@@ -166,6 +171,12 @@ describe('AuthService.register — FASE 1 atomic register', () => {
       verifyRefreshToken: jest.fn(),
       compareRefreshToken: jest.fn(),
     };
+    // F2.7-C — Mocks del ReferralsService. Por defecto generate devuelve
+    // un código fijo para que los asserts no dependan de aleatoriedad.
+    referrals = {
+      generateReferralCode: jest.fn().mockResolvedValue('PCLUB-AAAAAA'),
+      link: jest.fn().mockResolvedValue({ id: 'ref-uuid-1' }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -173,6 +184,7 @@ describe('AuthService.register — FASE 1 atomic register', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: PasswordHelper, useValue: passwords },
         { provide: TokenHelper, useValue: tokens },
+        { provide: ReferralsService, useValue: referrals },
       ],
     }).compile();
 
@@ -204,9 +216,15 @@ describe('AuthService.register — FASE 1 atomic register', () => {
         lastName: 'Doe',
         dni: null,
         role: Role.USER,
+        // F2.7-C — referralCode generado, referredByUserId null porque
+        // no se envió código de referido.
+        referralCode: 'PCLUB-AAAAAA',
+        referredByUserId: null,
       }),
       select: { id: true },
     });
+    expect(referrals.generateReferralCode).toHaveBeenCalledTimes(1);
+    expect(referrals.link).not.toHaveBeenCalled();
     expect(prisma.customer.findFirst).not.toHaveBeenCalled(); // no DNI = no dedupe
     expect(prisma.customer.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -424,6 +442,105 @@ describe('AuthService.register — FASE 1 atomic register', () => {
       'An account with this information already exists',
     );
   });
+
+  // ─── T13.4 — F2.7-C ─────────────────────────────────────────────────────
+  it('T13.4 — Register con referralCode válido crea linkage + setea referredByUserId', async () => {
+    const dto = makeDto({ referralCode: 'PCLUB-X8K2M7' });
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce(null) // pre-flight by email
+      .mockResolvedValueOnce({ id: 'referrer-uuid' }) // referralCode lookup
+      .mockResolvedValueOnce(makeEnrichedUser()); // post-TX loadWithRbac
+    prisma.user.create.mockResolvedValue({ id: 'user-uuid-1' });
+    prisma.customer.create.mockResolvedValue({ id: 'cust-uuid-1' });
+    prisma.user.update.mockResolvedValue({ id: 'user-uuid-1' });
+
+    await service.register(dto);
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { referralCode: 'PCLUB-X8K2M7' },
+      select: { id: true },
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        referralCode: 'PCLUB-AAAAAA',
+        referredByUserId: 'referrer-uuid', // FK denormalizada
+      }),
+      select: { id: true },
+    });
+    // El linkage en tabla Referral se crea con el caller del TX (referrals.link)
+    expect(referrals.link).toHaveBeenCalledWith({
+      referrerUserId: 'referrer-uuid',
+      referredUserId: 'user-uuid-1',
+      tx: expect.anything(),
+    });
+  });
+
+  // ─── T13.5 — F2.7-C / R1 ────────────────────────────────────────────────
+  it('T13.5 — Register con referralCode válido por formato pero inexistente en BD: soft-fail (R1)', async () => {
+    const dto = makeDto({ referralCode: 'PCLUB-ZZZZZZ' });
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce(null) // pre-flight by email
+      .mockResolvedValueOnce(null) // referralCode lookup → NOT FOUND
+      .mockResolvedValueOnce(makeEnrichedUser());
+    prisma.user.create.mockResolvedValue({ id: 'user-uuid-1' });
+    prisma.customer.create.mockResolvedValue({ id: 'cust-uuid-1' });
+    prisma.user.update.mockResolvedValue({ id: 'user-uuid-1' });
+
+    // R1: el registro debe COMPLETARSE sin error.
+    const result = await service.register(dto);
+    expect(result.user).toBeDefined();
+
+    // Sin linkage porque el referrer no existe.
+    expect(referrals.link).not.toHaveBeenCalled();
+    // El user queda con referredByUserId null.
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        referredByUserId: null,
+      }),
+      select: { id: true },
+    });
+  });
+
+  // ─── T13.6 — F2.7-C ─────────────────────────────────────────────────────
+  it('T13.6 — Register sin referralCode: no consulta referralCode, no linkage, sin referredByUserId', async () => {
+    const dto = makeDto();
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce(null) // by email
+      .mockResolvedValueOnce(makeEnrichedUser());
+    prisma.user.create.mockResolvedValue({ id: 'user-uuid-1' });
+    prisma.customer.create.mockResolvedValue({ id: 'cust-uuid-1' });
+    prisma.user.update.mockResolvedValue({ id: 'user-uuid-1' });
+
+    await service.register(dto);
+
+    // findUnique fue llamado solo para el pre-flight email (1) y post-TX (1).
+    // Ningún lookup por referralCode.
+    expect(prisma.user.findUnique).not.toHaveBeenCalledWith({
+      where: expect.objectContaining({ referralCode: expect.any(String) }),
+      select: { id: true },
+    });
+    expect(referrals.link).not.toHaveBeenCalled();
+  });
+
+  // ─── T13.7 — F2.7-C / R1 ────────────────────────────────────────────────
+  it('T13.7 — referralCode lookup falla (DB error): soft-fail, register continúa sin linkage', async () => {
+    const dto = makeDto({ referralCode: 'PCLUB-X8K2M7' });
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce(null) // pre-flight by email
+      .mockRejectedValueOnce(new Error('Transient DB error')) // referralCode lookup throws
+      .mockResolvedValueOnce(makeEnrichedUser());
+    prisma.user.create.mockResolvedValue({ id: 'user-uuid-1' });
+    prisma.customer.create.mockResolvedValue({ id: 'cust-uuid-1' });
+    prisma.user.update.mockResolvedValue({ id: 'user-uuid-1' });
+
+    const result = await service.register(dto);
+    expect(result.user).toBeDefined();
+    expect(referrals.link).not.toHaveBeenCalled();
+  });
 });
 
 // ─── T2.* — D3: /auth/me con customerProfile ────────────────────────────
@@ -450,6 +567,15 @@ describe('AuthService.getProfile — FASE 1 / D3 customerProfile expansion', () 
             hashRefreshToken: jest.fn(),
             verifyRefreshToken: jest.fn(),
             compareRefreshToken: jest.fn(),
+          },
+        },
+        {
+          // F2.7-C — AuthService.register depende de ReferralsService.
+          // El describe getProfile no lo usa, pero el DI lo exige.
+          provide: ReferralsService,
+          useValue: {
+            generateReferralCode: jest.fn(),
+            link: jest.fn(),
           },
         },
       ],

@@ -21,6 +21,11 @@ const DNI_REGEX = /^\d{8}$/;
 // Validación estricta de formato vive en el flujo de checkout, no en registro.
 const PHONE_REGEX = /^[+\d][\d\s\-()]{5,29}$/;
 
+// F2.7-C — Código de referido: formato PCLUB-XXXXXX (6 chars del alfabeto
+// sin ambigüedad). Normalizado a uppercase en el service. La regex es
+// case-insensitive a propósito para tolerar el copy-paste del usuario.
+const REFERRAL_CODE_DTO_REGEX = /^PCLUB-[A-HJKMNP-Za-hjkmnp-z2-9]{6}$/;
+
 export class RegisterDto {
   @ApiProperty({
     description: 'User email — must be unique',
@@ -28,7 +33,9 @@ export class RegisterDto {
     format: 'email',
     maxLength: 254,
   })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail({}, { message: 'email must be a valid email address' })
   @MaxLength(254)
   @IsNotEmpty()
@@ -112,4 +119,30 @@ export class RegisterDto {
     message: 'phone must contain only digits, spaces, dashes and parentheses',
   })
   phone?: string;
+
+  // ─── F2.7-C — Programa de referidos ───────────────────────────────────
+  //
+  // R1 — Soft-fail policy: si el código viene presente y la regex no
+  // matchea, validamos en DTO (devolvemos 400 por DTO inválido). Pero si
+  // la regex SÍ matchea y el código no existe en BD, el AuthService NO
+  // rechaza el registro — solo loguea warning y procede sin linkage.
+  //
+  // El front siempre envía el código normalizado a uppercase; aquí también
+  // aceptamos minúsculas para tolerar manipulación del usuario.
+
+  @ApiPropertyOptional({
+    description:
+      'Código de referido del invitador (PCLUB-XXXXXX). Si es inválido o no existe, el registro continúa sin linkage (R1).',
+    example: 'PCLUB-X8K2M7',
+    pattern: '^PCLUB-[A-HJKMNP-Z2-9]{6}$',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsString()
+  @Matches(REFERRAL_CODE_DTO_REGEX, {
+    message: 'referralCode must match PCLUB-XXXXXX format',
+  })
+  referralCode?: string;
 }

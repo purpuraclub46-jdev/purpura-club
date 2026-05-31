@@ -52,9 +52,9 @@ export const raffleSchema = z
     ticketPrice: z
       .number({ message: "El precio del ticket es obligatorio" })
       .min(0, "El precio debe ser 0 o mayor"),
-    memberTicketPrice: z
-      .number({ message: "El precio para miembros es obligatorio" })
-      .min(0, "El precio debe ser 0 o mayor"),
+    // F2.7-B — `memberTicketPrice` ya NO se edita desde admin: el backend
+    // siempre lo deriva como `ticketPrice * 0.5`. El campo se removió del
+    // schema para que el form no lo capture ni envíe.
     totalTickets: z
       .number({ message: "El total de tickets es obligatorio" })
       .int()
@@ -73,10 +73,6 @@ export const raffleSchema = z
       message: "La fecha de fin debe ser posterior a la de inicio",
       path: ["endDate"],
     },
-  )
-  .refine((data) => data.memberTicketPrice <= data.ticketPrice, {
-    message: "El precio para miembros no puede ser mayor al precio público",
-    path: ["memberTicketPrice"],
-  });
+  );
 
 export type RaffleFormValues = z.infer<typeof raffleSchema>;

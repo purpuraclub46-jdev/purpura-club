@@ -5,7 +5,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FiscalConfigService } from '../fiscal/fiscal-config.service';
 import { MembershipsService } from '../memberships/memberships.service';
 import { ReceiptsService } from '../receipts/receipts.service';
-import { ReferralsService } from '../referrals/referrals.service';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { OrdersService } from './orders.service';
 import { OrdersRepository } from './repositories/orders.repository';
@@ -139,11 +138,12 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         // Stub services no usados por findMine/findOneForCustomer
         {
           provide: MembershipsService,
-          useValue: { activateOrRenew: jest.fn() },
-        },
-        {
-          provide: ReferralsService,
-          useValue: { claimRewardForFirstPurchase: jest.fn() },
+          useValue: {
+            isActive: jest.fn(),
+            activateOrRenew: jest.fn(),
+            applyPaidPurchase: jest.fn(),
+            revertPaidPurchase: jest.fn(),
+          },
         },
         {
           provide: ReceiptsService,
@@ -346,7 +346,10 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
 
     it('T4.2 — Orden propia por número humano (Order.number) → retorna detalle', async () => {
       prisma.order.findFirst.mockResolvedValue(
-        makeOrderFixture({ number: 'ORD-20260101-0001', userId: 'user-a-uuid' }),
+        makeOrderFixture({
+          number: 'ORD-20260101-0001',
+          userId: 'user-a-uuid',
+        }),
       );
 
       const result = await service.findOneForCustomer(

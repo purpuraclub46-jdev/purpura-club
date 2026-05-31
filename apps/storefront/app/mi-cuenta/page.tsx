@@ -14,6 +14,7 @@ import {
   Ticket,
   User,
   UserCircle2,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -32,6 +33,7 @@ import {
 } from "@/features/account/hooks/use-account";
 import { useAuth, useLogout } from "@/features/auth/hooks/use-auth";
 import { useMyRaffleEntries } from "@/features/raffles/hooks/use-raffles";
+import { ReferralsTab } from "@/features/referrals/components/referrals-tab";
 import {
   ORDER_STATUS_LABEL,
   RAFFLE_ENTRY_STATUS_LABEL,
@@ -40,13 +42,21 @@ import {
   type OrderStatus,
 } from "@/types/api";
 
-type Tab = "perfil" | "pedidos" | "sorteos" | "membresia" | "direcciones";
+type Tab =
+  | "perfil"
+  | "pedidos"
+  | "sorteos"
+  | "membresia"
+  | "referidos"
+  | "direcciones";
 
 const TABS: Array<{ key: Tab; label: string; icon: typeof User }> = [
   { key: "perfil", label: "Perfil", icon: User },
   { key: "pedidos", label: "Mis pedidos", icon: Package },
   { key: "sorteos", label: "Tickets de sorteos", icon: Ticket },
   { key: "membresia", label: "Membresía", icon: Crown },
+  // F2.7-C / R3 — Tab independiente (no anidado en Membresía).
+  { key: "referidos", label: "Referidos", icon: Users },
   { key: "direcciones", label: "Direcciones", icon: MapPin },
 ];
 
@@ -147,6 +157,7 @@ export default function MiCuentaPage() {
           {tab === "pedidos" && <OrdersTab />}
           {tab === "sorteos" && <RaffleEntriesTab />}
           {tab === "membresia" && <MembershipTab />}
+          {tab === "referidos" && <ReferralsTab />}
           {tab === "direcciones" && <AddressesTab />}
         </section>
       </Container>

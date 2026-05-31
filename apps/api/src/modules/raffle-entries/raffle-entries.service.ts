@@ -20,6 +20,7 @@ import {
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { RafflePricingService } from '../raffles/raffle-pricing.service';
 import {
   DecideEntryDto,
   EntryDecision,
@@ -46,6 +47,7 @@ export class RaffleEntriesService {
     private readonly prisma: PrismaService,
     private readonly entriesRepository: RaffleEntriesRepository,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
+    private readonly rafflePricing: RafflePricingService,
   ) {}
 
   async purchase(
@@ -71,7 +73,12 @@ export class RaffleEntriesService {
       throw new BadRequestException('Raffle has already closed');
     }
 
-    const unitPrice = this.decimalToNumber(raffle.ticketPrice);
+    // F2.7-B / G9 — Fuente ÚNICA de verdad: el precio sale del
+    // RafflePricingService, NUNCA de `raffle.ticketPrice` directo.
+    // Aplica 50 % off automáticamente si el comprador es socio activo.
+    // El cliente NO puede influir en el precio (anti-tamper).
+    const pricing = await this.rafflePricing.resolveForUser(raffle, user.id);
+    const unitPrice = pricing.applicablePrice;
 
     if (dto.paymentMethod === PaymentMethod.FREE && unitPrice > 0) {
       throw new BadRequestException(

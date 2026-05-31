@@ -20,3 +20,15 @@ export const MEMBER_EXTRA_DISCOUNT_PERCENTAGE = 10;
 
 /** Días antes del vencimiento en los que se envían recordatorios automáticos. */
 export const EXPIRATION_REMINDER_DAYS = [7, 3, 1] as const;
+
+/**
+ * Descuento porcentual aplicado al precio público de un ticket de sorteo
+ * para socios activos del Púrpura Club (F2.7-B).
+ *
+ * Regla oficial del cliente: 50 % fijo. NO depende de la rifa, NO depende
+ * de la categoría, NO depende de promociones. Solo de la membresía activa.
+ *
+ * Esta constante es la fuente única de verdad: `RafflePricingService` la
+ * lee para resolver `memberPrice = round2(publicPrice * (1 - p/100))`.
+ */
+export const RAFFLE_MEMBER_DISCOUNT_PERCENTAGE = 50;
