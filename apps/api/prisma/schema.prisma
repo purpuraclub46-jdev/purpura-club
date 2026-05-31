@@ -572,9 +572,24 @@ model InventoryTransferItem {
 // ECOMMERCE — ORDERS
 // ─────────────────────────────────────────────
 
+/// Ciclo de vida completo de un pedido ecommerce.
+///   PENDING    → recién creado, esperando pago/confirmación.
+///   PAID       → pago confirmado. Trigger único de side effects (stock,
+///                membership, raffle entries, referral bonus).
+///   PROCESSING → preparándose en almacén tras cobro.
+///   SHIPPED    → entregado al courier.
+///   DELIVERED  → recibido por el cliente. Estado funcional terminal del flujo feliz.
+///   CANCELLED  → terminal desde PENDING únicamente. No emite side effects.
+///   REFUNDED   → terminal alcanzable solo vía credit note. Revierte side effects
+///                (smart revert de membership en pos-credit-notes.service).
+/// Las transiciones válidas se documentan en orders/state-machine.ts y se validan
+/// con assertValidOrderStatusTransition() en OrdersService.updateStatus().
 enum OrderStatus {
   PENDING
   PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
   CANCELLED
   REFUNDED
 }

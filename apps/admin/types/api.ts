@@ -64,7 +64,14 @@ export type InventoryTransferStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 
 export type StockLevel = "OK" | "LOW" | "OUT_OF_STOCK";
 
-export type OrderStatus = "PENDING" | "PAID" | "CANCELLED" | "REFUNDED";
+export type OrderStatus =
+  | "PENDING"
+  | "PAID"
+  | "PROCESSING"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "CANCELLED"
+  | "REFUNDED";
 export type OrderPaymentMethod = "MERCADOPAGO" | "YAPE" | "CASH" | "CARD";
 
 // ─── Membership Engine ───────────────────────────

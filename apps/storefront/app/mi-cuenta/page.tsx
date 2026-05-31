@@ -363,6 +363,9 @@ const ORDER_STATUS_TONE: Record<
 > = {
   PENDING: "warning",
   PAID: "success",
+  PROCESSING: "warning",
+  SHIPPED: "outline",
+  DELIVERED: "success",
   CANCELLED: "default",
   REFUNDED: "outline",
 };

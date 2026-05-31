@@ -34,9 +34,29 @@ const ORDER_STATUS_TONE: Record<
 > = {
   PENDING: "warning",
   PAID: "success",
+  PROCESSING: "warning",
+  SHIPPED: "outline",
+  DELIVERED: "success",
   CANCELLED: "default",
   REFUNDED: "outline",
 };
+
+// El estado de PAGO depende del lifecycle del pedido:
+//   - Cualquier estado >= PAID indica pago efectuado → "success"
+//   - PENDING → "warning"
+//   - CANCELLED / REFUNDED → sin tono (gris)
+function paymentTone(status: OrderStatus): "success" | "warning" | undefined {
+  if (
+    status === "PAID" ||
+    status === "PROCESSING" ||
+    status === "SHIPPED" ||
+    status === "DELIVERED"
+  ) {
+    return "success";
+  }
+  if (status === "PENDING") return "warning";
+  return undefined;
+}
 
 export default function OrderDetailPage() {
   const params = useParams<{ number: string }>();
@@ -309,13 +329,7 @@ function PaymentCard({ order }: { order: OrderEntity }) {
         <KeyValue
           label="Estado"
           value={ORDER_STATUS_LABEL[order.status]}
-          tone={
-            order.status === "PAID"
-              ? "success"
-              : order.status === "PENDING"
-                ? "warning"
-                : undefined
-          }
+          tone={paymentTone(order.status)}
         />
       </div>
     </div>

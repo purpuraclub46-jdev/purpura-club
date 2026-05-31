@@ -6,6 +6,7 @@ import {
 import {
   InventoryLocationType,
   OrderChannel,
+  OrderStatus,
   POSCashMovementType,
   POSCashSessionStatus,
   Prisma,
@@ -184,7 +185,7 @@ export class PosContextService {
     const baseOrderWhere = (from: Date): Prisma.OrderWhereInput => ({
       inventoryLocationId: locationId,
       channel: OrderChannel.POS,
-      status: 'PAID',
+      status: OrderStatus.PAID,
       createdAt: { gte: from },
     });
 

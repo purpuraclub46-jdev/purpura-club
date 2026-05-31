@@ -221,7 +221,14 @@ export interface MembershipEntity {
 
 // ─── Orders / Fiscal ─────────────────────────────────────────────────────
 
-export type OrderStatus = "PENDING" | "PAID" | "CANCELLED" | "REFUNDED";
+export type OrderStatus =
+  | "PENDING"
+  | "PAID"
+  | "PROCESSING"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "CANCELLED"
+  | "REFUNDED";
 export type OrderPaymentMethod = "MERCADOPAGO" | "YAPE" | "CASH" | "CARD";
 export type OrderChannel = "ECOMMERCE" | "POS";
 export type ReceiptSeriesType =
@@ -405,6 +412,9 @@ export const RAFFLE_ENTRY_STATUS_LABEL: Record<EntryStatus, string> = {
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PENDING: "Pendiente",
   PAID: "Pagado",
+  PROCESSING: "En preparación",
+  SHIPPED: "Enviado",
+  DELIVERED: "Entregado",
   CANCELLED: "Cancelado",
   REFUNDED: "Devuelto",
 };

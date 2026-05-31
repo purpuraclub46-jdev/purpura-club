@@ -50,6 +50,7 @@ import {
   OrderWithRelations,
   OrdersRepository,
 } from './repositories/orders.repository';
+import { assertValidOrderStatusTransition } from './state-machine';
 
 @Injectable()
 export class OrdersService {
@@ -351,6 +352,13 @@ export class OrdersService {
     if (existing.status === dto.status) {
       return this.toResponse(existing);
     }
+
+    // FASE 2 / F2.4 — Whitelist de transiciones permitidas (state-machine.ts).
+    // Lanza ConflictException (409) si la transición no está permitida.
+    // viaManualUpdate=true bloquea → REFUNDED (debe ir por nota de crédito).
+    assertValidOrderStatusTransition(existing.status, dto.status, {
+      viaManualUpdate: true,
+    });
 
     const wasPaid = existing.status === OrderStatus.PAID;
     const willBePaid = dto.status === OrderStatus.PAID;

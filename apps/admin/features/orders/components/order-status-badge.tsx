@@ -8,6 +8,9 @@ const STATUS_VARIANT: Record<
 > = {
   PENDING: "warning",
   PAID: "success",
+  PROCESSING: "warning",
+  SHIPPED: "default",
+  DELIVERED: "success",
   CANCELLED: "muted",
   REFUNDED: "destructive",
 };

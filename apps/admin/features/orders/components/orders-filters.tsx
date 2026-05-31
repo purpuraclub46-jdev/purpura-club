@@ -21,7 +21,15 @@ interface Props {
   onChange: (next: OrderListQuery) => void;
 }
 
-const STATUSES: OrderStatus[] = ["PENDING", "PAID", "CANCELLED", "REFUNDED"];
+const STATUSES: OrderStatus[] = [
+  "PENDING",
+  "PAID",
+  "PROCESSING",
+  "SHIPPED",
+  "DELIVERED",
+  "CANCELLED",
+  "REFUNDED",
+];
 const METHODS: OrderPaymentMethod[] = ["MERCADOPAGO", "YAPE", "CASH", "CARD"];
 
 export function OrdersFilters({ value, onChange }: Props) {

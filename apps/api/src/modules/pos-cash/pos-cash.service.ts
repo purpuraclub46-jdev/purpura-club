@@ -10,6 +10,7 @@ import {
 import {
   InventoryLocationType,
   OrderPaymentMethod,
+  OrderStatus,
   POSCashMovement,
   POSCashMovementType,
   POSCashSession,
@@ -477,13 +478,15 @@ export class PosCashService implements OnModuleInit {
         _count: { _all: true },
       }),
       this.prisma.order.aggregate({
-        where: { cashSessionId: session.id, status: 'PAID' },
+        where: { cashSessionId: session.id, status: OrderStatus.PAID },
         _sum: { total: true },
         _count: { _all: true },
       }),
       this.prisma.orderPayment.groupBy({
         by: ['method'],
-        where: { order: { cashSessionId: session.id, status: 'PAID' } },
+        where: {
+          order: { cashSessionId: session.id, status: OrderStatus.PAID },
+        },
         _sum: { amount: true },
         _count: { _all: true },
       }),

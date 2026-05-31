@@ -1,5 +1,6 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FiscalConfigService } from '../fiscal/fiscal-config.service';
 import { MembershipsService } from '../memberships/memberships.service';
@@ -436,6 +437,180 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
       const call = prisma.order.findFirst.mock.calls[0][0];
       // Debe tratarlo como number, no como id
       expect(call.where.AND[0]).toEqual({ number: 'ORD-2026-001' });
+    });
+  });
+
+  // ─── updateStatus — F2.4 transitions ─────────────────────────────────
+
+  describe('updateStatus — F2.4 Order Status whitelist', () => {
+    function attachUpdateMocks() {
+      (prisma.order as any).update = jest.fn();
+      (prisma as any).inventoryStock = {
+        findUnique: jest.fn(),
+        upsert: jest.fn(),
+      };
+      (prisma as any).inventoryMovement = { create: jest.fn() };
+    }
+
+    it('T8.1 — PENDING → PAID es permitido y persiste el nuevo status', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PENDING }),
+      );
+      (prisma.order as any).update.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PAID }),
+      );
+
+      await service.updateStatus('order-uuid', {
+        status: OrderStatus.PAID,
+      } as any);
+
+      expect((prisma.order as any).update).toHaveBeenCalledTimes(1);
+      expect((prisma.order as any).update.mock.calls[0][0].data).toEqual({
+        status: OrderStatus.PAID,
+      });
+    });
+
+    it('T8.2 — PENDING → CANCELLED es permitido', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PENDING }),
+      );
+      (prisma.order as any).update.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.CANCELLED }),
+      );
+
+      await service.updateStatus('order-uuid', {
+        status: OrderStatus.CANCELLED,
+      } as any);
+
+      expect((prisma.order as any).update).toHaveBeenCalledTimes(1);
+    });
+
+    it('T8.3 — PAID → PROCESSING es permitido y NO re-dispara side effects', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({
+          status: OrderStatus.PAID,
+          userId: 'user-a-uuid',
+          inventoryLocationId: 'loc-uuid',
+        }),
+      );
+      (prisma.order as any).update.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PROCESSING }),
+      );
+
+      await service.updateStatus('order-uuid', {
+        status: OrderStatus.PROCESSING,
+      } as any);
+
+      // Critical: wasPaid=true → no re-decrement stock, no re-trigger membership.
+      expect((prisma as any).inventoryStock.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).inventoryMovement.create).not.toHaveBeenCalled();
+    });
+
+    it('T8.4 — PROCESSING → SHIPPED → DELIVERED secuencia completa permitida', async () => {
+      attachUpdateMocks();
+
+      for (const [from, to] of [
+        [OrderStatus.PROCESSING, OrderStatus.SHIPPED],
+        [OrderStatus.SHIPPED, OrderStatus.DELIVERED],
+      ] as const) {
+        repository.findById.mockResolvedValueOnce(
+          makeOrderFixture({ status: from }),
+        );
+        (prisma.order as any).update.mockResolvedValueOnce(
+          makeOrderFixture({ status: to }),
+        );
+
+        await expect(
+          service.updateStatus('order-uuid', { status: to } as any),
+        ).resolves.toBeDefined();
+      }
+    });
+
+    it('T8.5 — PAID → SHIPPED rechazado (transición inválida, debe pasar por PROCESSING)', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PAID }),
+      );
+
+      await expect(
+        service.updateStatus('order-uuid', {
+          status: OrderStatus.SHIPPED,
+        } as any),
+      ).rejects.toThrow(ConflictException);
+
+      expect((prisma.order as any).update).not.toHaveBeenCalled();
+    });
+
+    it('T8.6 — PROCESSING → PAID rechazado (no se permite retroceder a PAID)', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PROCESSING }),
+      );
+
+      await expect(
+        service.updateStatus('order-uuid', {
+          status: OrderStatus.PAID,
+        } as any),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('T8.7 — PAID → REFUNDED rechazado vía PATCH manual (debe ir por nota de crédito)', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PAID }),
+      );
+
+      try {
+        await service.updateStatus('order-uuid', {
+          status: OrderStatus.REFUNDED,
+        } as any);
+        fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as Error).message).toMatch(/nota de cr[eé]dito/i);
+      }
+
+      expect((prisma.order as any).update).not.toHaveBeenCalled();
+    });
+
+    it('T8.8 — CANCELLED → cualquier estado rechazado (terminal)', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.CANCELLED }),
+      );
+
+      await expect(
+        service.updateStatus('order-uuid', {
+          status: OrderStatus.PAID,
+        } as any),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('T8.9 — no-op (mismo estado) retorna sin tocar DB ni validar transición', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(
+        makeOrderFixture({ status: OrderStatus.PAID }),
+      );
+
+      await service.updateStatus('order-uuid', {
+        status: OrderStatus.PAID,
+      } as any);
+
+      expect((prisma.order as any).update).not.toHaveBeenCalled();
+    });
+
+    it('T8.10 — orden inexistente → NotFoundException', async () => {
+      attachUpdateMocks();
+      repository.findById.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus('does-not-exist', {
+          status: OrderStatus.PAID,
+        } as any),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

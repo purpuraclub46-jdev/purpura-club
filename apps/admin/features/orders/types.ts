@@ -55,6 +55,9 @@ export interface OrderListQuery {
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PENDING: "Pendiente",
   PAID: "Pagado",
+  PROCESSING: "En preparación",
+  SHIPPED: "Enviado",
+  DELIVERED: "Entregado",
   CANCELLED: "Cancelado",
   REFUNDED: "Reembolsado",
 };

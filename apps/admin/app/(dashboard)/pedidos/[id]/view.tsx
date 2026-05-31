@@ -40,7 +40,24 @@ import {
 } from "@/features/orders/hooks/use-orders";
 import { ORDER_STATUS_LABEL } from "@/features/orders/types";
 
-const STATUSES: OrderStatus[] = ["PENDING", "PAID", "CANCELLED", "REFUNDED"];
+// FASE 2 / F2.4 — Espejo de la whitelist de transiciones definida en
+// apps/api/src/modules/orders/state-machine.ts. Mantener sincronizado.
+// REFUNDED queda fuera de toda lista porque debe ejecutarse vía nota de
+// crédito (POS Credit Notes), no por PATCH manual desde el dropdown.
+const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  PENDING: ["PAID", "CANCELLED"],
+  PAID: ["PROCESSING"],
+  PROCESSING: ["SHIPPED"],
+  SHIPPED: ["DELIVERED"],
+  DELIVERED: [],
+  CANCELLED: [],
+  REFUNDED: [],
+};
+
+function availableStatusesFor(current: OrderStatus): OrderStatus[] {
+  // El propio estado se mantiene visible (selected) + los permitidos.
+  return [current, ...ALLOWED_TRANSITIONS[current]];
+}
 
 export function OrderDetailView({ id }: { id: string }) {
   const { data: order, isLoading, isError } = useOrder(id);
@@ -110,7 +127,7 @@ export function OrderDetailView({ id }: { id: string }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {STATUSES.map((s) => (
+              {availableStatusesFor(order.status).map((s) => (
                 <SelectItem key={s} value={s}>
                   {ORDER_STATUS_LABEL[s]}
                 </SelectItem>
