@@ -260,6 +260,23 @@ export class OrdersService {
           receiptNumber: receiptData?.receiptNumber,
           receiptIssuedAt: receiptData?.receiptIssuedAt,
           sunatStatus: SunatStatus.PENDING,
+          // ── Shipping snapshot (F2.6-A) ──
+          // Copia denormalizada de la dirección de envío al momento de
+          // crear el pedido. Si dto.shipping no viene (POS, legacy), todos
+          // los campos quedan NULL.
+          shippingAddressId: dto.shipping?.addressId ?? null,
+          shippingRecipientName: dto.shipping?.recipientName ?? null,
+          shippingRecipientPhone: dto.shipping?.recipientPhone ?? null,
+          shippingStreet: dto.shipping?.street ?? null,
+          shippingNumber: dto.shipping?.number ?? null,
+          shippingApartment: dto.shipping?.apartment ?? null,
+          shippingDistrict: dto.shipping?.district ?? null,
+          shippingProvince: dto.shipping?.province ?? null,
+          shippingRegion: dto.shipping?.region ?? null,
+          shippingCountryCode: dto.shipping
+            ? (dto.shipping.countryCode ?? 'PE').toUpperCase()
+            : null,
+          shippingReference: dto.shipping?.reference ?? null,
           items: {
             create: items,
           },
@@ -797,6 +814,28 @@ export class OrdersService {
           }
         : null;
 
+    const shipping =
+      order.shippingRecipientName &&
+      order.shippingStreet &&
+      order.shippingNumber &&
+      order.shippingDistrict &&
+      order.shippingProvince &&
+      order.shippingRegion
+        ? {
+            addressId: order.shippingAddressId,
+            recipientName: order.shippingRecipientName,
+            recipientPhone: order.shippingRecipientPhone ?? '',
+            street: order.shippingStreet,
+            number: order.shippingNumber,
+            apartment: order.shippingApartment,
+            district: order.shippingDistrict,
+            province: order.shippingProvince,
+            region: order.shippingRegion,
+            countryCode: order.shippingCountryCode ?? 'PE',
+            reference: order.shippingReference,
+          }
+        : null;
+
     return {
       id: order.id,
       number: order.number,
@@ -814,6 +853,7 @@ export class OrdersService {
             type: order.location.type,
           }
         : null,
+      shipping,
       subtotal: this.decimalToNumber(order.subtotal),
       discount: this.decimalToNumber(order.discount),
       total: this.decimalToNumber(order.total),

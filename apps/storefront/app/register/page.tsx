@@ -14,8 +14,8 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, type ComponentType, type SVGProps } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMemo, useState, type ComponentType, type SVGProps } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/shared/ui/button";
@@ -84,8 +84,22 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const reg = useRegister();
   const [showPassword, setShowPassword] = useState(false);
+
+  // ?next= con anti-open-redirect (espejo del patrón /login).
+  // Solo paths relativos al storefront. Default → /mi-cuenta.
+  const nextHref = useMemo(() => {
+    const raw = searchParams?.get("next");
+    if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+    return "/mi-cuenta";
+  }, [searchParams]);
+
+  const loginHref = useMemo(() => {
+    if (nextHref === "/mi-cuenta") return "/login";
+    return `/login?next=${encodeURIComponent(nextHref)}`;
+  }, [nextHref]);
 
   const {
     register,
@@ -100,7 +114,7 @@ export default function RegisterPage() {
     try {
       await reg.mutateAsync(values);
       toast.success("¡Bienvenida al Club Púrpura!");
-      router.replace("/mi-cuenta");
+      router.replace(nextHref);
     } catch (error) {
       toast.error("No pudimos crear tu cuenta", extractErrorMessage(error));
     }
@@ -347,7 +361,7 @@ export default function RegisterPage() {
           <div className="border-t border-[#11111110] pt-4 text-center text-[12px] text-[#0A0A0A]/55">
             ¿Ya tienes cuenta?{" "}
             <Link
-              href="/login"
+              href={loginHref}
               className="font-medium text-[#9810FA] underline-offset-4 transition-all duration-200 hover:underline"
             >
               Inicia sesión

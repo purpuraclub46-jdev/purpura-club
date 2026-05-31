@@ -22,6 +22,7 @@ import { HomeCategoriesModule } from './modules/home-categories/home-categories.
 import { HomeStoresModule } from './modules/home-stores/home-stores.module';
 import { InventoryLocationsModule } from './modules/inventory-locations/inventory-locations.module';
 import { InventoryTransfersModule } from './modules/inventory-transfers/inventory-transfers.module';
+import { CheckoutModule } from './modules/checkout/checkout.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { MembershipsModule } from './modules/memberships/memberships.module';
 import { OrdersModule } from './modules/orders/orders.module';
@@ -71,6 +72,7 @@ import { PrismaModule } from './prisma/prisma.module';
     InventoryModule,
     InventoryTransfersModule,
     OrdersModule,
+    CheckoutModule,
     CustomersModule,
     ReceiptsModule,
     PosCashModule,

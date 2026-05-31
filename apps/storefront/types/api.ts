@@ -265,6 +265,20 @@ export interface OrderLocationRef {
   type: InventoryLocationType;
 }
 
+export interface OrderShippingSnapshot {
+  addressId: string | null;
+  recipientName: string;
+  recipientPhone: string;
+  street: string;
+  number: string;
+  apartment: string | null;
+  district: string;
+  province: string;
+  region: string;
+  countryCode: string;
+  reference: string | null;
+}
+
 export interface OrderEntity {
   id: string;
   number: string;
@@ -276,6 +290,7 @@ export interface OrderEntity {
   notes: string | null;
   customer: OrderCustomerRef | null;
   location: OrderLocationRef | null;
+  shipping: OrderShippingSnapshot | null;
   items: OrderItemEntity[];
   fiscal: {
     igvRate: number;
@@ -480,6 +495,35 @@ export interface CreateAddressInput {
 }
 
 export type UpdateAddressInput = Partial<CreateAddressInput>;
+
+// ─── Checkout (F2.6-A) ───────────────────────────────────────────────────
+
+export interface CheckoutItemInput {
+  productId: string;
+  quantity: number;
+}
+
+export interface CreateCheckoutSessionInput {
+  shippingAddressId: string;
+  items: CheckoutItemInput[];
+  paymentMethod?: OrderPaymentMethod;
+  notes?: string;
+}
+
+export type CheckoutSessionVerdict =
+  | "REDIRECT"
+  | "PENDING_SETUP"
+  | "UNSUPPORTED";
+
+export interface CheckoutSessionResponse {
+  orderId: string;
+  orderNumber: string;
+  verdict: CheckoutSessionVerdict;
+  redirectUrl: string | null;
+  provider: string;
+  mode: "sandbox" | "production" | "none";
+  message: string;
+}
 
 // ─── Libro de Reclamaciones (INDECOPI · Peru) ────────────────────────────
 

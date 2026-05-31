@@ -181,7 +181,11 @@ export default function LoginPage() {
           <AuthCrossLink
             prefix="¿No tienes cuenta?"
             label="Crear cuenta"
-            href="/register"
+            href={
+              nextHref === "/mi-cuenta"
+                ? "/register"
+                : `/register?next=${encodeURIComponent(nextHref)}`
+            }
           />
         </motion.div>
       </main>

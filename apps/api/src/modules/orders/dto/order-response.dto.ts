@@ -114,6 +114,51 @@ export class OrderReceiptDto {
   sunatStatus!: SunatStatus;
 }
 
+/**
+ * Snapshot inmutable de la dirección de envío al momento del checkout.
+ * Patrón espejo del fiscal snapshot — vive en Order, no es FK.
+ */
+export class OrderShippingSnapshotResponseDto {
+  @ApiPropertyOptional({
+    type: String,
+    format: 'uuid',
+    nullable: true,
+    description:
+      'Referencia débil al CustomerAddress original. Auditoría; puede ser null si la dirección fue borrada.',
+  })
+  addressId!: string | null;
+
+  @ApiProperty()
+  recipientName!: string;
+
+  @ApiProperty()
+  recipientPhone!: string;
+
+  @ApiProperty()
+  street!: string;
+
+  @ApiProperty()
+  number!: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  apartment!: string | null;
+
+  @ApiProperty()
+  district!: string;
+
+  @ApiProperty()
+  province!: string;
+
+  @ApiProperty()
+  region!: string;
+
+  @ApiProperty({ example: 'PE' })
+  countryCode!: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  reference!: string | null;
+}
+
 export class OrderResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -126,6 +171,14 @@ export class OrderResponseDto {
 
   @ApiPropertyOptional({ type: OrderLocationRefDto, nullable: true })
   location!: OrderLocationRefDto | null;
+
+  @ApiPropertyOptional({
+    type: OrderShippingSnapshotResponseDto,
+    nullable: true,
+    description:
+      'Dirección de entrega capturada al momento del checkout. Null en pedidos POS o legacy.',
+  })
+  shipping!: OrderShippingSnapshotResponseDto | null;
 
   @ApiProperty()
   subtotal!: number;

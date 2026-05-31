@@ -91,6 +91,72 @@ export class OrderCustomerFiscalDto {
   email?: string;
 }
 
+/**
+ * Snapshot de dirección de envío. Patrón espejo del fiscal:
+ * los campos se persisten denormalizados en Order para que el pedido
+ * quede inmutable aunque la CustomerAddress se borre (soft delete) o
+ * edite después. shippingAddressId es referencia débil para auditoría.
+ */
+export class OrderShippingSnapshotDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  addressId?: string;
+
+  @ApiProperty({ maxLength: 120 })
+  @IsString()
+  @MaxLength(120)
+  recipientName!: string;
+
+  @ApiProperty({ maxLength: 20 })
+  @IsString()
+  @MaxLength(20)
+  recipientPhone!: string;
+
+  @ApiProperty({ maxLength: 200 })
+  @IsString()
+  @MaxLength(200)
+  street!: string;
+
+  @ApiProperty({ maxLength: 20 })
+  @IsString()
+  @MaxLength(20)
+  number!: string;
+
+  @ApiPropertyOptional({ maxLength: 60 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  apartment?: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MaxLength(80)
+  district!: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MaxLength(80)
+  province!: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MaxLength(80)
+  region!: string;
+
+  @ApiPropertyOptional({ maxLength: 2, default: 'PE' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  countryCode?: string;
+
+  @ApiPropertyOptional({ maxLength: 240 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  reference?: string;
+}
+
 export class CreateOrderDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
@@ -174,4 +240,15 @@ export class CreateOrderDto {
     typeof value === 'string' ? value === 'true' : Boolean(value),
   )
   issueReceipt?: boolean;
+
+  // ─── Shipping snapshot (FASE 2 / F2.6-A) ─────────────────────────────
+  @ApiPropertyOptional({
+    type: OrderShippingSnapshotDto,
+    description:
+      'Snapshot inmutable de la dirección de entrega. Para checkout ecommerce con CustomerAddress (F2.5). POS / pedidos legacy lo omiten.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderShippingSnapshotDto)
+  shipping?: OrderShippingSnapshotDto;
 }

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { formatCurrency } from "@/shared/lib/format";
@@ -26,13 +27,13 @@ import {
   useCartStore,
   type CartItem,
 } from "@/stores/cart.store";
-import { toast } from "@/stores/toast.store";
 import { useAuth } from "@/features/auth/hooks/use-auth";
 
 export function CartDrawer() {
   const items = useCartStore((s) => s.items);
   const isOpen = useCartStore((s) => s.isOpen);
   const close = useCartStore((s) => s.closeDrawer);
+  const router = useRouter();
   const setQuantity = useCartStore((s) => s.setQuantity);
   const remove = useCartStore((s) => s.remove);
   const gross = useCartStore(selectCartGross);
@@ -59,18 +60,12 @@ export function CartDrawer() {
 
   const handleCheckout = () => {
     if (isEmpty) return;
+    close();
     if (!isAuthenticated) {
-      toast.info(
-        "Inicia sesión para continuar",
-        "Necesitas una cuenta del Club Púrpura para completar tu pedido.",
-      );
-      close();
+      router.push("/login?next=/checkout");
       return;
     }
-    toast.info(
-      "Checkout en desarrollo",
-      "Esta funcionalidad estará disponible muy pronto. Tu carrito quedó guardado.",
-    );
+    router.push("/checkout");
   };
 
   return (

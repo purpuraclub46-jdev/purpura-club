@@ -665,6 +665,23 @@ model Order {
   sunatErrorMessage   String?
   sunatSubmittedAt    DateTime?
 
+  // ─── Shipping snapshot (FASE 2 / F2.6-A) ─────────────────────────────
+  /// Snapshot inmutable de la dirección de entrega elegida en el checkout.
+  /// Patrón espejo del snapshot fiscal: campos string denormalizados, NO FK,
+  /// para que el pedido quede legible aunque el CustomerAddress se borre
+  /// (soft delete). `shippingAddressId` es referencia débil para audit, no FK.
+  shippingAddressId        String? @db.Uuid
+  shippingRecipientName    String? @db.VarChar(120)
+  shippingRecipientPhone   String? @db.VarChar(20)
+  shippingStreet           String? @db.VarChar(200)
+  shippingNumber           String? @db.VarChar(20)
+  shippingApartment        String? @db.VarChar(60)
+  shippingDistrict         String? @db.VarChar(80)
+  shippingProvince         String? @db.VarChar(80)
+  shippingRegion           String? @db.VarChar(80)
+  shippingCountryCode      String? @db.Char(2)
+  shippingReference        String? @db.VarChar(240)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
