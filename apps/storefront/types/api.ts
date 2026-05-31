@@ -434,6 +434,53 @@ export const RECEIPT_TYPE_LABEL: Record<ReceiptSeriesType, string> = {
   NOTA_VENTA: "Nota de venta",
 };
 
+// ─── Customer addresses (F2.5) ───────────────────────────────────────────
+
+export type AddressType = "SHIPPING" | "BILLING" | "PICKUP";
+
+export const ADDRESS_TYPE_LABEL: Record<AddressType, string> = {
+  SHIPPING: "Envío",
+  BILLING: "Facturación",
+  PICKUP: "Retiro en tienda",
+};
+
+export interface AddressEntity {
+  id: string;
+  type: AddressType;
+  label: string | null;
+  recipientName: string;
+  recipientPhone: string;
+  street: string;
+  number: string;
+  apartment: string | null;
+  district: string;
+  province: string;
+  region: string;
+  countryCode: string;
+  reference: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAddressInput {
+  type?: AddressType;
+  label?: string;
+  recipientName: string;
+  recipientPhone: string;
+  street: string;
+  number: string;
+  apartment?: string;
+  district: string;
+  province: string;
+  region: string;
+  countryCode?: string;
+  reference?: string;
+  isDefault?: boolean;
+}
+
+export type UpdateAddressInput = Partial<CreateAddressInput>;
+
 // ─── Libro de Reclamaciones (INDECOPI · Peru) ────────────────────────────
 
 export type ComplaintType = "RECLAMO" | "QUEJA";

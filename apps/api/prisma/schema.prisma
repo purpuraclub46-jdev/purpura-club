@@ -886,7 +886,8 @@ model Customer {
   user            User?              @relation("UserCustomerProfile", fields: [userId], references: [id], onDelete: SetNull)
   primaryLocation InventoryLocation? @relation("CustomerPrimaryLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
 
-  orders Order[] @relation("CustomerOrders")
+  orders    Order[]           @relation("CustomerOrders")
+  addresses CustomerAddress[] @relation("CustomerAddresses")
 
   @@index([active])
   @@index([isMember, active])
@@ -896,6 +897,65 @@ model Customer {
   @@index([email])
   @@index([documentType, ruc])
   @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// CUSTOMER ADDRESSES — FASE 2 / F2.5
+// ─────────────────────────────────────────────
+
+/// Tipo semántico de dirección registrada por el cliente.
+///   SHIPPING  → dirección de entrega ecommerce (UI activa en F2.5).
+///   BILLING   → facturación alternativa (puede divergir de Customer.fiscalAddress).
+///   PICKUP    → punto de retiro en tienda / POS (reservado para FASE futura).
+///
+/// IMPORTANTE: este modelo NO reemplaza Customer.fiscalAddress (string
+/// denormalizado para SUNAT) ni Order.customerFiscalAddress (snapshot
+/// inmutable del comprobante). Ambos permanecen intactos para preservar
+/// la inmutabilidad legal del comprobante fiscal SUNAT.
+enum AddressType {
+  SHIPPING
+  BILLING
+  PICKUP
+}
+
+model CustomerAddress {
+  id         String      @id @default(uuid()) @db.Uuid
+  customerId String      @db.Uuid
+
+  type  AddressType @default(SHIPPING)
+  label String?     @db.VarChar(60)
+
+  /// Datos del receptor — pueden diferir del Customer (p.ej. envío a un familiar).
+  recipientName  String @db.VarChar(120)
+  recipientPhone String @db.VarChar(20)
+
+  /// Componentes geográficos (Perú-first, free-form en region/province/district
+  /// para no rigidizar antes de tener UBIGEO completo).
+  street      String  @db.VarChar(200)
+  number      String  @db.VarChar(20)
+  apartment   String? @db.VarChar(60)
+  district    String  @db.VarChar(80)
+  province    String  @db.VarChar(80)
+  region      String  @db.VarChar(80)
+  countryCode String  @default("PE") @db.Char(2)
+  reference   String? @db.VarChar(240)
+
+  /// Exactamente una isDefault=true por (customerId, type) activa. Enforced
+  /// por CustomerAddressesService en transacción atómica.
+  isDefault Boolean @default(false)
+
+  /// Soft delete para no romper referencias históricas si en el futuro Order
+  /// referencia direcciones. Listados públicos filtran active=true.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer @relation("CustomerAddresses", fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, type, active])
+  @@index([customerId, isDefault])
+  @@map("customer_addresses")
 }
 
 // ─────────────────────────────────────────────

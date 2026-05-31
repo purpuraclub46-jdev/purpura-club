@@ -25,6 +25,7 @@ import { EmptyState } from "@/shared/ui/empty-state";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
 import { formatCurrency, formatDate, formatDateTime } from "@/shared/lib/format";
+import { AddressesTab } from "@/features/account/components/addresses-tab";
 import {
   useMyMembership,
   useMyOrders,
@@ -676,18 +677,7 @@ function Stat({
   );
 }
 
-function AddressesTab() {
-  return (
-    <div>
-      <SectionHeader
-        title="Mis direcciones"
-        description="Pronto podrás guardar direcciones de envío preferidas."
-      />
-      <EmptyState
-        icon={MapPin}
-        title="Próximamente"
-        description="Estamos preparando la gestión de direcciones para tus pedidos. Por ahora coordinamos contigo en el checkout."
-      />
-    </div>
-  );
-}
+// FASE 2 / F2.5 — La implementación real vive en
+// features/account/components/addresses-tab.tsx para mantener acotado el
+// blast radius. Aquí solo se importa y se renderiza dentro del switch
+// del tab activo.
