@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { Role } from "@/types/api";
+import type { CustomerProfileSummary, Role } from "@/types/api";
 
 export interface AuthUser {
   id: string;
@@ -13,6 +13,7 @@ export interface AuthUser {
   active?: boolean;
   createdAt: string;
   updatedAt: string;
+  customerProfile?: CustomerProfileSummary | null;
 }
 
 export interface AuthTokens {

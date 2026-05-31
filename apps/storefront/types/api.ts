@@ -51,6 +51,29 @@ export interface AuthRoleSummary {
   name: string;
 }
 
+export type CustomerGender = "MASCULINO" | "FEMENINO" | "OTRO";
+
+// Espejo TS del CustomerProfileSummaryDto del backend (FASE 1 D3).
+// Embebido en /auth/me, /auth/login, /auth/register, /auth/refresh.
+// CustomerDocumentType ya está declarado más abajo en la sección Orders.
+export interface CustomerProfileSummary {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  phone: string | null;
+  dni: string | null;
+  documentType: CustomerDocumentType;
+  ruc: string | null;
+  legalName: string | null;
+  fiscalAddress: string | null;
+  birthDate: string | null;
+  gender: CustomerGender | null;
+  isMember: boolean;
+  membershipExpiresAt: string | null;
+  primaryLocationId: string | null;
+}
+
 // ─── Catalog ─────────────────────────────────────────────────────────────
 
 export type CategoryGroup = "JOYERIA" | "PERFUMES" | "ACCESORIOS";
@@ -223,6 +246,18 @@ export interface OrderItemEntity {
   igvAmount: number;
 }
 
+export interface OrderCustomerRef {
+  id: string;
+  email: string;
+  fullName: string;
+}
+
+export interface OrderLocationRef {
+  id: string;
+  name: string;
+  type: InventoryLocationType;
+}
+
 export interface OrderEntity {
   id: string;
   number: string;
@@ -232,6 +267,8 @@ export interface OrderEntity {
   discount: number;
   total: number;
   notes: string | null;
+  customer: OrderCustomerRef | null;
+  location: OrderLocationRef | null;
   items: OrderItemEntity[];
   fiscal: {
     igvRate: number;
@@ -370,6 +407,21 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PAID: "Pagado",
   CANCELLED: "Cancelado",
   REFUNDED: "Devuelto",
+};
+
+export const ORDER_PAYMENT_METHOD_LABEL: Record<OrderPaymentMethod, string> = {
+  MERCADOPAGO: "MercadoPago",
+  YAPE: "Yape",
+  CASH: "Efectivo",
+  CARD: "Tarjeta",
+};
+
+export const RECEIPT_TYPE_LABEL: Record<ReceiptSeriesType, string> = {
+  BOLETA: "Boleta",
+  FACTURA: "Factura",
+  NOTA_CREDITO: "Nota de crédito",
+  NOTA_DEBITO: "Nota de débito",
+  NOTA_VENTA: "Nota de venta",
 };
 
 // ─── Libro de Reclamaciones (INDECOPI · Peru) ────────────────────────────

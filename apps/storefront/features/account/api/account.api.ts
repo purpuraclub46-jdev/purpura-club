@@ -23,4 +23,11 @@ export const accountApi = {
     );
     return unwrap(data).items;
   },
+
+  myOrder: async (idOrNumber: string): Promise<OrderEntity> => {
+    const { data } = await httpClient.get<ApiResponse<OrderEntity>>(
+      `/orders/me/${encodeURIComponent(idOrNumber)}`,
+    );
+    return unwrap(data);
+  },
 };

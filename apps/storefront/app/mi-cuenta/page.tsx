@@ -1,14 +1,19 @@
 "use client";
 
 import {
+  CalendarDays,
+  ChevronRight,
   Crown,
+  IdCard,
   Loader2,
   LogOut,
   MapPin,
   Package,
+  Phone,
   ShieldCheck,
   Ticket,
   User,
+  UserCircle2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -30,13 +35,15 @@ import {
   ORDER_STATUS_LABEL,
   RAFFLE_ENTRY_STATUS_LABEL,
   RAFFLE_ENTRY_TYPE_LABEL,
+  type OrderEntity,
+  type OrderStatus,
 } from "@/types/api";
 
 type Tab = "perfil" | "pedidos" | "sorteos" | "membresia" | "direcciones";
 
 const TABS: Array<{ key: Tab; label: string; icon: typeof User }> = [
   { key: "perfil", label: "Perfil", icon: User },
-  { key: "pedidos", label: "Pedidos", icon: Package },
+  { key: "pedidos", label: "Mis pedidos", icon: Package },
   { key: "sorteos", label: "Tickets de sorteos", icon: Ticket },
   { key: "membresia", label: "Membresía", icon: Crown },
   { key: "direcciones", label: "Direcciones", icon: MapPin },
@@ -165,9 +172,134 @@ function SectionHeader({
   );
 }
 
+const GENDER_LABEL: Record<"MASCULINO" | "FEMENINO" | "OTRO", string> = {
+  MASCULINO: "Masculino",
+  FEMENINO: "Femenino",
+  OTRO: "Otro",
+};
+
 function ProfileTab() {
   const { user } = useAuth();
   if (!user) return null;
+  const profile = user.customerProfile;
+  return profile ? (
+    <ProfileFullView user={user} profile={profile} />
+  ) : (
+    <ProfileLegacyView user={user} />
+  );
+}
+
+function ProfileFullView({
+  user,
+  profile,
+}: {
+  user: NonNullable<ReturnType<typeof useAuth>["user"]>;
+  profile: NonNullable<NonNullable<ReturnType<typeof useAuth>["user"]>["customerProfile"]>;
+}) {
+  const firstName = profile.firstName || user.firstName;
+  const lastName = profile.lastName || user.lastName;
+  const membershipActive =
+    profile.isMember &&
+    (!profile.membershipExpiresAt ||
+      new Date(profile.membershipExpiresAt) > new Date());
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader
+        title="Tu perfil"
+        description="Esta es la información asociada a tu cuenta del Club Púrpura."
+      />
+
+      <div className="lux-card rounded-2xl p-5 sm:p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <UserCircle2 className="size-4 text-[#9810FA]" />
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/55">
+            Datos personales
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Nombre" value={firstName} />
+          <Field label="Apellido" value={lastName} />
+          <Field label="Correo electrónico" value={user.email} />
+          <Field
+            label="DNI"
+            value={profile.dni ?? "—"}
+            icon={IdCard}
+            muted={!profile.dni}
+          />
+          <Field
+            label="Teléfono"
+            value={profile.phone ?? "—"}
+            icon={Phone}
+            muted={!profile.phone}
+          />
+          <Field
+            label="Fecha de nacimiento"
+            value={
+              profile.birthDate ? formatDate(profile.birthDate) : "—"
+            }
+            icon={CalendarDays}
+            muted={!profile.birthDate}
+          />
+          <Field
+            label="Género"
+            value={profile.gender ? GENDER_LABEL[profile.gender] : "—"}
+            muted={!profile.gender}
+          />
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          "rounded-2xl border p-5 sm:p-6",
+          membershipActive
+            ? "border-[#9810FA]/30 bg-[#9810FA]/4"
+            : "border-[#11111114] bg-white",
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Crown
+              className={cn(
+                "size-4",
+                membershipActive ? "text-[#9810FA]" : "text-[#0A0A0A]/45",
+              )}
+            />
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/55">
+              Membresía del Club
+            </p>
+          </div>
+          <Badge tone={membershipActive ? "success" : "default"}>
+            {membershipActive ? "Activa" : "Sin membresía"}
+          </Badge>
+        </div>
+        <p className="mt-3 text-sm font-medium text-[#0A0A0A]">
+          {membershipActive
+            ? "Estás disfrutando los beneficios del Club Púrpura."
+            : "Realiza una compra calificada para activarla."}
+        </p>
+        {profile.membershipExpiresAt ? (
+          <p className="mt-1 text-xs text-[#0A0A0A]/55">
+            {membershipActive ? "Vence el " : "Venció el "}
+            {formatDate(profile.membershipExpiresAt)}
+          </p>
+        ) : null}
+      </div>
+
+      <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.22em] text-[#0A0A0A]/45">
+        <ShieldCheck className="size-3 text-[#9810FA]" />
+        Tu información está protegida — para cambiar email o contraseña,
+        contáctanos.
+      </p>
+    </div>
+  );
+}
+
+function ProfileLegacyView({
+  user,
+}: {
+  user: NonNullable<ReturnType<typeof useAuth>["user"]>;
+}) {
   return (
     <div className="space-y-5">
       <SectionHeader
@@ -178,15 +310,12 @@ function ProfileTab() {
         <Field label="Nombre" value={user.firstName} />
         <Field label="Apellido" value={user.lastName} />
         <Field label="Correo electrónico" value={user.email} />
-        <Field label="Tipo de cuenta" value={user.role === "USER" ? "Cliente del club" : user.role} />
         <Field
-          label="Miembro desde"
-          value={formatDate(user.createdAt)}
+          label="Tipo de cuenta"
+          value={user.role === "USER" ? "Cliente del club" : user.role}
         />
-        <Field
-          label="Actualización"
-          value={formatDateTime(user.updatedAt)}
-        />
+        <Field label="Miembro desde" value={formatDate(user.createdAt)} />
+        <Field label="Actualización" value={formatDateTime(user.updatedAt)} />
       </div>
       <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.22em] text-[#0A0A0A]/45">
         <ShieldCheck className="size-3 text-[#9810FA]" />
@@ -197,83 +326,156 @@ function ProfileTab() {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+  icon: Icon,
+  muted,
+}: {
+  label: string;
+  value: string;
+  icon?: typeof User;
+  muted?: boolean;
+}) {
   return (
     <div className="space-y-1">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0A0A0A]/55">
-        {label}
+      <div className="flex items-center gap-1.5">
+        {Icon ? <Icon className="size-3 text-[#0A0A0A]/45" /> : null}
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0A0A0A]/55">
+          {label}
+        </p>
+      </div>
+      <p
+        className={cn(
+          "text-sm font-medium",
+          muted ? "text-[#0A0A0A]/35" : "text-[#0A0A0A]",
+        )}
+      >
+        {value}
       </p>
-      <p className="text-sm font-medium text-[#0A0A0A]">{value}</p>
     </div>
   );
 }
+
+const ORDER_STATUS_TONE: Record<
+  OrderStatus,
+  "warning" | "success" | "default" | "outline"
+> = {
+  PENDING: "warning",
+  PAID: "success",
+  CANCELLED: "default",
+  REFUNDED: "outline",
+};
 
 function OrdersTab() {
   const { data, isLoading } = useMyOrders();
   const orders = data ?? [];
 
-  return (
-    <div>
-      <SectionHeader
-        title="Mis pedidos"
-        description="Historial completo de tus compras en Purpura Club."
-      />
-      {isLoading ? (
+  if (isLoading) {
+    return (
+      <div className="space-y-5">
+        <SectionHeader
+          title="Mis pedidos"
+          description="Historial de tus compras en Purpura Club."
+        />
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+            <Skeleton key={i} className="h-28 w-full rounded-2xl" />
           ))}
         </div>
-      ) : orders.length === 0 ? (
-        <EmptyState
-          icon={Package}
-          title="Aún no tienes pedidos"
-          description="Cuando compres en la tienda aparecerán aquí con su comprobante."
-          action={
-            <Link href="/shop">
-              <Button>Ir a la tienda</Button>
-            </Link>
-          }
-        />
-      ) : (
-        <ul className="space-y-3">
-          {orders.map((o) => (
-            <li
-              key={o.id}
-              className="lux-card flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs text-[#0A0A0A]/75">
-                    {o.number}
-                  </span>
-                  <Badge tone={o.status === "PAID" ? "success" : o.status === "PENDING" ? "warning" : "default"}>
-                    {ORDER_STATUS_LABEL[o.status]}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-xs text-[#0A0A0A]/55">
-                  {formatDateTime(o.createdAt)} ·{" "}
-                  {o.items.reduce((acc, i) => acc + i.quantity, 0)} producto(s)
-                </p>
-                {o.receipt ? (
-                  <p className="mt-1 text-[10px] font-mono uppercase tracking-[0.18em] text-[#9810FA]">
-                    {o.receipt.formatted}
-                  </p>
-                ) : null}
-              </div>
-              <div className="text-right">
-                <p className="text-lg font-semibold tabular-nums text-[#0A0A0A]">
-                  {formatCurrency(o.total)}
-                </p>
-                <p className="text-[10px] text-[#0A0A0A]/45">
-                  IGV {formatCurrency(o.fiscal.igvAmount)}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      </div>
+    );
+  }
+
+  if (orders.length === 0) {
+    return <OrdersEmptyState />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader
+        title="Mis pedidos"
+        description="Historial de tus compras en Purpura Club."
+      />
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {orders.map((order) => (
+          <OrderCard key={order.id} order={order} />
+        ))}
+      </ul>
     </div>
+  );
+}
+
+function OrdersEmptyState() {
+  return (
+    <div className="space-y-5">
+      <SectionHeader title="Mis pedidos" />
+      <div className="relative isolate overflow-hidden rounded-2xl border border-[#11111114] bg-white px-6 py-14 text-center sm:py-20">
+        <div
+          aria-hidden
+          className="absolute inset-0 -z-10 opacity-60"
+          style={{
+            background:
+              "radial-gradient(50% 50% at 50% 0%, rgba(152,16,250,0.08) 0%, transparent 70%)",
+          }}
+        />
+        <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-[#9810FA]/10 text-[#9810FA]">
+          <Package className="size-5" />
+        </div>
+        <h3 className="mt-4 font-serif text-2xl tracking-tight text-[#0A0A0A]">
+          Aún no tienes pedidos
+        </h3>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-[#0A0A0A]/55">
+          Cuando realices tu primera compra podrás seguir el estado de tus
+          pedidos desde aquí.
+        </p>
+        <Link href="/shop" className="mt-6 inline-block">
+          <Button>Explorar productos</Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function OrderCard({ order }: { order: OrderEntity }) {
+  const itemsCount = order.items.reduce((acc, i) => acc + i.quantity, 0);
+  return (
+    <li>
+      <Link
+        href={`/mi-cuenta/pedidos/${order.number}`}
+        className="lux-card group flex h-full flex-col gap-4 rounded-2xl p-5 transition-colors hover:border-[#9810FA]/30"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0A0A0A]/45">
+              Pedido
+            </p>
+            <p className="mt-0.5 font-mono text-sm text-[#0A0A0A]">
+              #{order.number}
+            </p>
+          </div>
+          <Badge tone={ORDER_STATUS_TONE[order.status]}>
+            {ORDER_STATUS_LABEL[order.status]}
+          </Badge>
+        </div>
+
+        <div className="text-xs text-[#0A0A0A]/55">
+          {formatDate(order.createdAt)}
+          <span className="mx-1.5 text-[#0A0A0A]/25">·</span>
+          {itemsCount} {itemsCount === 1 ? "producto" : "productos"}
+        </div>
+
+        <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+          <p className="text-xl font-semibold tabular-nums tracking-tight text-[#0A0A0A]">
+            {formatCurrency(order.total)}
+          </p>
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-[#9810FA] transition-transform group-hover:translate-x-0.5">
+            Ver detalle
+            <ChevronRight className="size-3.5" />
+          </span>
+        </div>
+      </Link>
+    </li>
   );
 }
 
