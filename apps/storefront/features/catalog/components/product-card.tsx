@@ -1,12 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowRight, Heart, ImageOff, ShoppingBag, Sparkles } from "lucide-react";
+import { ArrowRight, Heart, ImageOff, ShoppingBag } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { formatCurrency } from "@/shared/lib/format";
+import { isProductClubEligible } from "@/shared/lib/club-eligibility";
+import { MembershipBadge } from "@/shared/ui/membership-badge";
 import { useCartStore } from "@/stores/cart.store";
 import { toast } from "@/stores/toast.store";
 import {
@@ -91,6 +93,19 @@ export function ProductCard({
   const discountPct =
     hasDiscount && product.discountPercentage
       ? Math.round(product.discountPercentage)
+      : null;
+
+  // F2.7-D — Elegibilidad Club derivada del `categoryGroup` (D3).
+  // Mostramos el badge "+10% Club" cuando hay promo activa Y el producto
+  // está en JOYERIA o PERFUMES. Para socios, además marcamos el precio
+  // final como precio socio si el backend devolvió memberPrice válido.
+  const clubEligible = isProductClubEligible(product);
+  const showClubBonusBadge = hasDiscount && clubEligible;
+  const memberPrice =
+    clubEligible &&
+    product.memberPrice !== null &&
+    product.memberPrice < finalPrice
+      ? product.memberPrice
       : null;
 
   const handleAdd = (e: React.MouseEvent) => {
@@ -232,7 +247,14 @@ export function ProductCard({
                       >
                         −{discountPct}%
                       </span>
-                      <ClubBenefitBadge percent={CLUB_BENEFIT_PCT} isSm={isSm} />
+                      {showClubBonusBadge ? (
+                        <MembershipBadge
+                          tone="clubBonus"
+                          size={isSm ? "sm" : "md"}
+                          label={`+${CLUB_BENEFIT_PCT}% Club`}
+                          ariaLabel={`Miembros del Club obtienen ${CLUB_BENEFIT_PCT}% adicional`}
+                        />
+                      ) : null}
                     </>
                   ) : product.featured ? (
                     <span
@@ -425,64 +447,30 @@ export function ProductCard({
           ) : null}
         </div>
 
+        {/* F2.7-D — Línea precio socio. Solo se renderiza si:
+            - El producto está en categoría elegible (JOYERIA/PERFUMES)
+            - El backend devolvió un memberPrice real menor al finalPrice
+              (lo que ocurre cuando el caller es socio activo Y hay promo
+              activa, dado el comportamiento actual de `computeProductPricing`)
+            Para visitantes anónimos / no socios el backend no expone
+            memberPrice → no se muestra precio exacto a anónimos (D4).
+            En su lugar, el badge "+10% Club" arriba del card actúa como
+            gancho comercial sin desvelar el monto. */}
+        {memberPrice !== null ? (
+          <p
+            className={cn(
+              "flex items-center gap-1 tabular-nums text-[#9810FA]",
+              isSm ? "pt-0.5 text-[11px]" : "pt-1 text-[12px]",
+            )}
+          >
+            <span className="font-medium uppercase tracking-[0.16em] text-[#9810FA]/75">
+              Tu precio Club
+            </span>
+            <span className="font-semibold">{formatCurrency(memberPrice)}</span>
+          </p>
+        ) : null}
       </div>
     </Link>
-  );
-}
-
-/**
- * Badge "✦ +X% CLUB" para la sección de ofertas. Glass morado premium con
- * glow ultra sutil que se intensifica en `group-hover` de la card. El
- * gradient interno + un shimmer diagonal le dan la lectura "luxury membership"
- * sin caer en estilos dashboard.
- *
- * Mantiene `pointer-events-none` heredado del contenedor padre — el target
- * de click es siempre el `<Link>` envolvente de la card.
- */
-function ClubBenefitBadge({
-  percent,
-  isSm,
-}: {
-  percent: number;
-  isSm: boolean;
-}) {
-  return (
-    <span
-      aria-label={`Miembros del Club obtienen ${percent}% adicional`}
-      className={cn(
-        "relative inline-flex items-center overflow-hidden rounded-full font-semibold uppercase",
-        "text-white tabular-nums backdrop-blur-md",
-        // Base: gradient morado translúcido + ring sutil para definir el borde
-        "bg-linear-to-br from-[#9810FA]/85 via-[#7C0CD8]/80 to-[#5B0AAD]/85",
-        "ring-1 ring-white/15 ring-inset",
-        // Glow sutil que se intensifica en hover del card
-        "shadow-[0_6px_18px_-10px_rgba(152,16,250,0.55)]",
-        "transition-shadow duration-500 ease-out",
-        "group-hover:shadow-[0_10px_28px_-10px_rgba(152,16,250,0.75)]",
-        isSm
-          ? "gap-0.5 px-1.5 py-0.5 text-[9px] tracking-[0.14em]"
-          : "gap-1 px-2 py-0.75 text-[10px] tracking-[0.16em]",
-      )}
-    >
-      {/* Micro shimmer diagonal — corre una vez en hover */}
-      <span
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-0 -translate-x-full",
-          "bg-linear-to-r from-transparent via-white/25 to-transparent",
-          "transition-transform duration-1100 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          "group-hover:translate-x-full",
-        )}
-      />
-      <Sparkles
-        className={cn(
-          "relative",
-          isSm ? "size-2.5" : "size-3",
-        )}
-        strokeWidth={1.8}
-      />
-      <span className="relative">+{percent}% Club</span>
-    </span>
   );
 }
 

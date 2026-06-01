@@ -69,10 +69,11 @@ model User {
   inventoryMovements InventoryMovement[]
   inventoryTransfers InventoryTransfer[]
 
-  membership       Membership?
-  benefitLogs      MembershipBenefitLog[]
-  referralsMade    Referral[]             @relation("ReferralFrom")
-  referralReceived Referral?              @relation("ReferralTo")
+  membership            Membership?
+  benefitLogs           MembershipBenefitLog[]
+  membershipNotifications MembershipNotificationLog[]
+  referralsMade         Referral[]             @relation("ReferralFrom")
+  referralReceived      Referral?              @relation("ReferralTo")
 
   // RBAC dinámico
   roles             UserRole[]
@@ -689,6 +690,16 @@ model Order {
   shippingCountryCode      String? @db.Char(2)
   shippingReference        String? @db.VarChar(240)
 
+  // ─── F2.8-A — Membership Benefits Engine idempotency ─────────────────
+  /// Sello que indica que el Membership Engine ya aplicó los beneficios
+  /// (activate/renew, tickets PURCHASE_REWARD, logs, sync Customer.isMember,
+  /// referral bonus) para esta orden. CAS pattern:
+  ///   UPDATE orders SET benefitsAppliedAt = now()
+  ///   WHERE id = ? AND benefitsAppliedAt IS NULL
+  /// Si count = 0, otra ejecución ya ganó el claim → NO-OP idempotente.
+  /// NULL para órdenes que aún no llegaron a PAID (o pre-F2.8-A no backfilled).
+  benefitsAppliedAt        DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -712,6 +723,11 @@ model Order {
   @@index([status, createdAt])
   @@index([sunatStatus])
   @@index([receiptType, receiptSeries, receiptNumber])
+  // F2.8-A — facilita el scan del reconciler futuro: órdenes PAID cuyo engine
+  // no terminó (status=PAID AND benefitsAppliedAt IS NULL). El índice parcial
+  // se materializa en la migración (Prisma todavía no expone índices parciales
+  // en el DSL; usamos un índice ordinario que Postgres puede usar igualmente).
+  @@index([status, benefitsAppliedAt])
   @@map("orders")
 }
 
@@ -780,11 +796,70 @@ model Membership {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications MembershipNotificationLog[]
 
   @@index([active, expiresAt])
   @@index([expiresAt])
   @@map("memberships")
+}
+
+// F2.7-E — Tipos canónicos de notificaciones de ciclo de vida del Club.
+// El scheduler dispara los REMINDER_*; `activateOrRenew` dispara WELCOME.
+// Cualquier nuevo tipo debe agregarse aquí Y modelar su trigger en
+// MembershipNotificationsService — la tabla es la fuente única de auditoría.
+enum MembershipNotificationType {
+  WELCOME
+  REMINDER_7D
+  REMINDER_3D
+  REMINDER_1D
+}
+
+// F2.7-E — Audit + idempotencia de notificaciones por email del Club.
+//
+// Cada fila representa UN envío exitoso (o registrado como "claim" por una
+// instancia del scheduler). El unique compuesto `(membershipId, type,
+// referenceExpiresAt)` es la estrategia oficial de:
+//
+//   1. Idempotencia: el mismo membership no recibe dos veces el mismo type
+//      para el mismo ciclo.
+//   2. Lock distribuido: en cluster multi-instancia, el primer INSERT gana
+//      y los demás reciben P2002 → skip silencioso.
+//
+// `referenceExpiresAt` se snapshotea desde `Membership.expiresAt` al
+// momento del envío. Renovar la membresía cambia ese valor y libera la
+// posibilidad de enviar el siguiente ciclo de reminders sin colisionar
+// con los del ciclo anterior.
+//
+// `toEmail` también se snapshotea: si el usuario cambia su email después,
+// la auditoría preserva la dirección a la que efectivamente se mandó.
+model MembershipNotificationLog {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  membershipId       String                     @db.Uuid
+  userId             String                     @db.Uuid
+  type               MembershipNotificationType
+
+  /// expiresAt del ciclo al momento del envío. Cada renovación produce
+  /// un valor distinto y por tanto puede emitir un nuevo set de reminders.
+  referenceExpiresAt DateTime
+
+  /// ID devuelto por el EmailProvider (Resend/SES/etc.) cuando está
+  /// disponible. Permite trazar bounces y reintentos manuales. NULL si
+  /// el provider no devolvió ID o el envío falló tras claim.
+  emailMessageId     String?
+
+  /// Email destinatario snapshot al momento del envío. Inmutable.
+  toEmail            String
+
+  sentAt             DateTime                   @default(now())
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, type, referenceExpiresAt], map: "uq_membership_notif_per_cycle")
+  @@index([userId, type])
+  @@index([sentAt])
+  @@map("membership_notification_logs")
 }
 
 enum MembershipBenefitType {

@@ -873,6 +873,10 @@ export class ProductsService {
         id: rel.category.id,
         name: rel.category.name,
         slug: rel.category.slug,
+        // F2.7-D / D3 — `group` ya viene en el include para el pricing
+        // engine; lo exponemos también para que el storefront pueda
+        // calcular elegibilidad Club sin replicar la regla.
+        group: rel.category.group,
       })),
       availability: product.availability
         .filter((a) =>

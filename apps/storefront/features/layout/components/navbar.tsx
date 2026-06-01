@@ -16,6 +16,7 @@ import {
   selectWishlistCount,
   useWishlistStore,
 } from "@/stores/wishlist.store";
+import { HeaderMembershipBadge } from "./header-membership-badge";
 import { UserMenu } from "./user-menu";
 
 interface NavLink {
@@ -346,6 +347,8 @@ export function Navbar() {
               </span>
             ) : null}
           </button>
+
+          <HeaderMembershipBadge />
 
           <UserMenu />
 

@@ -270,7 +270,7 @@ describe('ReferralsService', () => {
         referredUserId: 'user-B',
       });
 
-      expect(result).toEqual({ referrerUserId: 'user-A' });
+      expect(result).toEqual({ referralId: 'ref-1', referrerUserId: 'user-A' });
     });
 
     it('T13.11 — R6 late-linkage: Referral.createdAt >= order.createdAt → no premia', async () => {
@@ -310,7 +310,7 @@ describe('ReferralsService', () => {
         orderCreatedAt,
       });
 
-      expect(result).toEqual({ referrerUserId: 'user-A' });
+      expect(result).toEqual({ referralId: 'ref-1', referrerUserId: 'user-A' });
     });
 
     it('Sin orderCreatedAt: guard R6 no se aplica (compat)', async () => {
@@ -326,7 +326,53 @@ describe('ReferralsService', () => {
         referredUserId: 'user-B',
       });
 
-      expect(result).toEqual({ referrerUserId: 'user-A' });
+      expect(result).toEqual({ referralId: 'ref-1', referrerUserId: 'user-A' });
+    });
+  });
+
+  // ─── F2.8-B — releaseClaim compensating rollback ──────────────────────
+  describe('releaseClaim (F2.8-B)', () => {
+    it('Libera un claim activo cuando referrerUserId matchea → true', async () => {
+      prisma.referral.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      const result = await service.releaseClaim({
+        referralId: 'ref-1',
+        expectedReferrerUserId: 'user-A',
+      });
+
+      expect(result).toBe(true);
+      expect(prisma.referral.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'ref-1',
+          rewarded: true,
+          referrerUserId: 'user-A',
+        },
+        data: { rewarded: false, rewardedAt: null },
+      });
+    });
+
+    it('Referral ya liberado (rewarded:false) → false sin error', async () => {
+      prisma.referral.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.releaseClaim({
+        referralId: 'ref-1',
+        expectedReferrerUserId: 'user-A',
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it('expectedReferrerUserId mismatch (intento de manipulación) → false', async () => {
+      // Simulamos: updateMany devuelve count=0 porque el WHERE filtra
+      // por referrerUserId='user-MALICIOSO' que no matchea el row real.
+      prisma.referral.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.releaseClaim({
+        referralId: 'ref-1',
+        expectedReferrerUserId: 'user-MALICIOSO',
+      });
+
+      expect(result).toBe(false);
     });
   });
 
@@ -355,8 +401,8 @@ describe('ReferralsService', () => {
         service.claimRewardForFirstPurchase({ referredUserId: 'user-C' }),
       ]);
 
-      expect(resultB).toEqual({ referrerUserId: 'user-A' });
-      expect(resultC).toEqual({ referrerUserId: 'user-A' });
+      expect(resultB).toEqual({ referralId: 'ref-B', referrerUserId: 'user-A' });
+      expect(resultC).toEqual({ referralId: 'ref-C', referrerUserId: 'user-A' });
       expect(prisma.referral.updateMany).toHaveBeenCalledTimes(2);
     });
   });

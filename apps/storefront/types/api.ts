@@ -116,6 +116,12 @@ export interface ProductCategoryRef {
   id: string;
   name: string;
   slug: string;
+  /**
+   * F2.7-D — Grupo macro de la categoría. El storefront lo usa para
+   * computar elegibilidad Club (JOYERIA + PERFUMES califican para el
+   * beneficio +10% socio; ACCESORIOS no).
+   */
+  group: CategoryGroup;
 }
 
 export interface ProductAvailabilitySlot {
@@ -234,6 +240,12 @@ export interface MembershipEntity {
   active: boolean;
   startedAt: string;
   expiresAt: string;
+  /**
+   * F2.7-D — Días enteros restantes hasta `expiresAt`, calculados por el
+   * backend al armar la response. Negativo si ya venció, null si la
+   * membresía nunca se activó.
+   */
+  daysRemaining: number | null;
   lastPurchaseAt: string | null;
   createdAt: string;
   updatedAt: string;

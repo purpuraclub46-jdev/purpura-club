@@ -42,6 +42,9 @@ type PrismaMock = {
   order: {
     findFirst: jest.Mock;
     findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+    updateMany: jest.Mock;
+    update: jest.Mock;
   };
   inventoryLocation: { findUnique: jest.Mock };
   $transaction: jest.Mock;
@@ -62,6 +65,10 @@ function createPrismaMock(): PrismaMock {
     order: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      // F2.8-A — Capa 1 CAS de status. Default: ganado (count=1).
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn(),
     },
     inventoryLocation: { findUnique: jest.fn() },
     $transaction: jest.fn(),
@@ -141,7 +148,16 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
           useValue: {
             isActive: jest.fn(),
             activateOrRenew: jest.fn(),
-            applyPaidPurchase: jest.fn(),
+            // F2.8-A — el caller hace `.catch(...)` sobre el resultado dentro
+            // de un setImmediate. Default a resolved promise para no romper.
+            applyPaidPurchase: jest.fn().mockResolvedValue({
+              membership: null,
+              renewed: false,
+              welcomeSent: false,
+              ticketsGranted: 0,
+              referralReward: null,
+              alreadyApplied: false,
+            }),
             revertPaidPurchase: jest.fn(),
           },
         },
@@ -447,7 +463,9 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
 
   describe('updateStatus — F2.4 Order Status whitelist', () => {
     function attachUpdateMocks() {
-      (prisma.order as any).update = jest.fn();
+      // F2.8-A — Capa 1 CAS via updateMany; findUniqueOrThrow re-lee el row tras claim.
+      prisma.order.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      prisma.order.findUniqueOrThrow = jest.fn();
       (prisma as any).inventoryStock = {
         findUnique: jest.fn(),
         upsert: jest.fn(),
@@ -460,7 +478,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
       repository.findById.mockResolvedValue(
         makeOrderFixture({ status: OrderStatus.PENDING }),
       );
-      (prisma.order as any).update.mockResolvedValue(
+      prisma.order.findUniqueOrThrow.mockResolvedValue(
         makeOrderFixture({ status: OrderStatus.PAID }),
       );
 
@@ -468,9 +486,11 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         status: OrderStatus.PAID,
       } as any);
 
-      expect((prisma.order as any).update).toHaveBeenCalledTimes(1);
-      expect((prisma.order as any).update.mock.calls[0][0].data).toEqual({
-        status: OrderStatus.PAID,
+      // F2.8-A — Capa 1: el CAS debe escribir con WHERE id+status del previo.
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany.mock.calls[0][0]).toEqual({
+        where: { id: 'order-uuid', status: OrderStatus.PENDING },
+        data: { status: OrderStatus.PAID },
       });
     });
 
@@ -479,7 +499,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
       repository.findById.mockResolvedValue(
         makeOrderFixture({ status: OrderStatus.PENDING }),
       );
-      (prisma.order as any).update.mockResolvedValue(
+      prisma.order.findUniqueOrThrow.mockResolvedValue(
         makeOrderFixture({ status: OrderStatus.CANCELLED }),
       );
 
@@ -487,7 +507,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         status: OrderStatus.CANCELLED,
       } as any);
 
-      expect((prisma.order as any).update).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it('T8.3 — PAID → PROCESSING es permitido y NO re-dispara side effects', async () => {
@@ -499,7 +519,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
           inventoryLocationId: 'loc-uuid',
         }),
       );
-      (prisma.order as any).update.mockResolvedValue(
+      prisma.order.findUniqueOrThrow.mockResolvedValue(
         makeOrderFixture({ status: OrderStatus.PROCESSING }),
       );
 
@@ -522,7 +542,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         repository.findById.mockResolvedValueOnce(
           makeOrderFixture({ status: from }),
         );
-        (prisma.order as any).update.mockResolvedValueOnce(
+        prisma.order.findUniqueOrThrow.mockResolvedValueOnce(
           makeOrderFixture({ status: to }),
         );
 
@@ -544,7 +564,8 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         } as any),
       ).rejects.toThrow(ConflictException);
 
-      expect((prisma.order as any).update).not.toHaveBeenCalled();
+      // Ni el CAS ni el read post-claim deben dispararse.
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
     });
 
     it('T8.6 — PROCESSING → PAID rechazado (no se permite retroceder a PAID)', async () => {
@@ -576,7 +597,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         expect((err as Error).message).toMatch(/nota de cr[eé]dito/i);
       }
 
-      expect((prisma.order as any).update).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
     });
 
     it('T8.8 — CANCELLED → cualquier estado rechazado (terminal)', async () => {
@@ -602,7 +623,7 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
         status: OrderStatus.PAID,
       } as any);
 
-      expect((prisma.order as any).update).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
     });
 
     it('T8.10 — orden inexistente → NotFoundException', async () => {
@@ -614,6 +635,69 @@ describe('OrdersService — FASE 1 / D4 — Historial unificado + ownership segu
           status: OrderStatus.PAID,
         } as any),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    // ─── F2.8-A — Capa 1 CAS de transición de status ──────────────────
+    describe('F2.8-A — Capa 1 CAS (T15.3, T15.4)', () => {
+      it('T15.3 — CAS perdido (otro request ya transicionó) → no toca stock ni dispara engine, retorna estado actual', async () => {
+        attachUpdateMocks();
+        repository.findById
+          .mockResolvedValueOnce(
+            makeOrderFixture({
+              status: OrderStatus.PENDING,
+              userId: 'user-a-uuid',
+              inventoryLocationId: 'loc-uuid',
+            }),
+          )
+          // segundo findById tras el claim perdido devuelve el estado ya cambiado
+          .mockResolvedValueOnce(
+            makeOrderFixture({
+              status: OrderStatus.PAID,
+              userId: 'user-a-uuid',
+              inventoryLocationId: 'loc-uuid',
+            }),
+          );
+
+        // CAS pierde: count = 0
+        prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        const result = await service.updateStatus('order-uuid', {
+          status: OrderStatus.PAID,
+        } as any);
+
+        // Retorna el estado encontrado (ya PAID por el ganador).
+        expect(result.status).toBe(OrderStatus.PAID);
+        // NO se vuelve a leer post-claim porque perdimos.
+        expect(prisma.order.findUniqueOrThrow).not.toHaveBeenCalled();
+        // NO se toca stock ni movement.
+        expect((prisma as any).inventoryStock.upsert).not.toHaveBeenCalled();
+        expect((prisma as any).inventoryMovement.create).not.toHaveBeenCalled();
+        // El engine fire-and-forget tampoco se programa: el caller perdedor
+        // no debe duplicar trabajo.
+      });
+
+      it('T15.4 — CAS ganado en PENDING → PAID re-lee con findUniqueOrThrow y procede con engine', async () => {
+        attachUpdateMocks();
+        repository.findById.mockResolvedValue(
+          makeOrderFixture({
+            status: OrderStatus.PENDING,
+            userId: 'user-a-uuid',
+          }),
+        );
+        prisma.order.findUniqueOrThrow.mockResolvedValue(
+          makeOrderFixture({
+            status: OrderStatus.PAID,
+            userId: 'user-a-uuid',
+          }),
+        );
+
+        await service.updateStatus('order-uuid', {
+          status: OrderStatus.PAID,
+        } as any);
+
+        // CAS exitoso → se lee el row final.
+        expect(prisma.order.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

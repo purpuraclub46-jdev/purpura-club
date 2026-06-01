@@ -1,8 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CategoryGroup } from '@prisma/client';
 import { ProductAvailabilityResponseDto } from './product-availability.dto';
-import {
-  ProductImageResponseDto,
-} from './product-image.dto';
+import { ProductImageResponseDto } from './product-image.dto';
 import { ProductVariantResponseDto } from './product-variant.dto';
 
 export class ProductCategoryRefDto {
@@ -14,6 +13,18 @@ export class ProductCategoryRefDto {
 
   @ApiProperty()
   slug!: string;
+
+  // F2.7-D / D3 — Exponemos el grupo para que el storefront decida si el
+  // producto es Club-eligible (JOYERIA | PERFUMES) sin replicar la lista
+  // del backend ni adivinar por slug. Acoplado al enum Prisma; cambios al
+  // enum son ABI-breaking para el frontend.
+  @ApiProperty({
+    enum: ['JOYERIA', 'PERFUMES', 'ACCESORIOS'],
+    description:
+      'Grupo macro de la categoría. JOYERIA y PERFUMES son elegibles para el +10% del Club Púrpura; ACCESORIOS no.',
+    example: 'JOYERIA',
+  })
+  group!: CategoryGroup;
 }
 
 export class ProductInventorySummaryDto {

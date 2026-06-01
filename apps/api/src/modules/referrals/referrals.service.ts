@@ -133,7 +133,7 @@ export class ReferralsService {
     referredUserId: string;
     orderCreatedAt?: Date;
     tx?: Tx;
-  }): Promise<{ referrerUserId: string } | null> {
+  }): Promise<{ referralId: string; referrerUserId: string } | null> {
     const db = args.tx ?? this.prisma;
     const referral = await db.referral.findUnique({
       where: { referredUserId: args.referredUserId },
@@ -167,7 +167,49 @@ export class ReferralsService {
     this.logger.log(
       `Referral rewarded: referrer=${referral.referrerUserId} referred=${args.referredUserId}`,
     );
-    return { referrerUserId: referral.referrerUserId };
+    return {
+      referralId: referral.id,
+      referrerUserId: referral.referrerUserId,
+    };
+  }
+
+  /**
+   * F2.8-B — Libera un claim que NO se materializó (rollback compensatorio).
+   *
+   * Caso de uso: el caller (MembershipsService) hizo `claimRewardForFirstPurchase`
+   * exitosamente, pero el subsiguiente `RaffleTicketsService.grantToUser` no
+   * pudo otorgar el ticket (sorteo cerrado, sin asientos, etc). Sin esta
+   * liberación el Referral quedaría "quemado" sin que el referidor recibiera
+   * nada — bug R6 detectado en auditoría F2.8-B.
+   *
+   * Idempotente y seguro bajo race:
+   *   - Usa CAS sobre `(id, rewarded=true, referrerUserId=expected)`.
+   *   - Si otro path ya re-asignó el referral (improbable) o ya está liberado,
+   *     simplemente retorna `false`.
+   *   - Filtra por `referrerUserId` para evitar liberar un claim que un actor
+   *     malicioso intentara modificar pasando un `referralId` ajeno.
+   */
+  async releaseClaim(args: {
+    referralId: string;
+    expectedReferrerUserId: string;
+    tx?: Tx;
+  }): Promise<boolean> {
+    const db = args.tx ?? this.prisma;
+    const result = await db.referral.updateMany({
+      where: {
+        id: args.referralId,
+        rewarded: true,
+        referrerUserId: args.expectedReferrerUserId,
+      },
+      data: { rewarded: false, rewardedAt: null },
+    });
+    if (result.count > 0) {
+      this.logger.warn(
+        `Referral claim released (no ticket granted): referral=${args.referralId}`,
+      );
+      return true;
+    }
+    return false;
   }
 
   // ─── Customer-facing overview ─────────────────────────────────────────

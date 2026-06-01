@@ -22,6 +22,11 @@ import { cn } from "@/shared/lib/cn";
 import { useMediaQuery } from "@/shared/lib/use-media-query";
 import { extractErrorMessage } from "@/services/http/client";
 import { useAuth, useLogin, useLogout } from "@/features/auth/hooks/use-auth";
+import {
+  resolveMembershipBadgeProps,
+  useMembershipState,
+} from "@/features/account/hooks/use-membership-state";
+import { MembershipBadge } from "@/shared/ui/membership-badge";
 import { toast } from "@/stores/toast.store";
 import { useUserMenuStore } from "@/stores/user-menu.store";
 
@@ -318,6 +323,12 @@ function AccountPanel({
   onLogout: () => void | Promise<void>;
   logoutPending: boolean;
 }) {
+  // F2.7-D / D6 — Badge socio visible siempre que la membresía esté activa.
+  // El tono cambia automáticamente cuando faltan ≤3 días (urgent/critical)
+  // para empujar a renovar sin necesidad de un banner aparte aquí.
+  const membership = useMembershipState();
+  const badge = resolveMembershipBadgeProps(membership);
+
   return (
     <div>
       <div className="flex items-center gap-3 px-6 pt-6 pb-5">
@@ -329,6 +340,16 @@ function AccountPanel({
             {firstName} {lastName}
           </p>
           <p className="truncate text-[11px] text-[#0A0A0A]/55">{email}</p>
+          {badge ? (
+            <Link
+              href="/mi-cuenta?tab=membresia"
+              onClick={onClose}
+              aria-label="Ver membresía"
+              className="mt-2 inline-flex"
+            >
+              <MembershipBadge {...badge} />
+            </Link>
+          ) : null}
         </div>
       </div>
 

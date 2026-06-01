@@ -13,9 +13,9 @@ import {
   buildPaginationMeta,
 } from '../../common/interfaces/paginated.interface';
 import { PrismaService } from '../../prisma/prisma.service';
-import { EmailsService } from '../emails/emails.service';
 import { RaffleTicketsService } from '../raffle-tickets/raffle-tickets.service';
 import { ReferralsService } from '../referrals/referrals.service';
+import { MembershipNotificationsService } from './membership-notifications.service';
 import { BenefitLogQueryDto } from './dto/benefit-log-query.dto';
 import { MembershipQueryDto } from './dto/membership-query.dto';
 import {
@@ -78,6 +78,13 @@ export interface ApplyPaidPurchaseResult {
     referrerUserId: string;
     bonusTickets: number;
   } | null;
+  /**
+   * F2.8-A — `true` cuando el engine detectó que esta orden ya tenía
+   * `benefitsAppliedAt` set y devolvió un snapshot leído desde logs sin
+   * ejecutar side effects. Permite a callers/telemetría distinguir
+   * "primera aplicación" de "re-call idempotente".
+   */
+  alreadyApplied: boolean;
 }
 
 export interface RevertPaidPurchaseArgs {
@@ -100,11 +107,16 @@ export interface RevertPaidPurchaseResult {
 export class MembershipsService {
   private readonly logger = new Logger(MembershipsService.name);
 
+  // F2.7-E — `EmailsService` ya no se inyecta acá. La lógica de envío
+  // (incluyendo idempotencia y auditoría) vive en
+  // `MembershipNotificationsService`. Si necesitas mandar otros emails
+  // no relacionados con notificaciones de ciclo Club, hazlo desde allí
+  // o crea un servicio dedicado.
   constructor(
     private readonly prisma: PrismaService,
-    private readonly emails: EmailsService,
     private readonly raffleTickets: RaffleTicketsService,
     private readonly referrals: ReferralsService,
+    private readonly notifications: MembershipNotificationsService,
   ) {}
 
   /**
@@ -218,26 +230,28 @@ export class MembershipsService {
       select: { id: true, expiresAt: true },
     });
 
-    // Solo enviamos bienvenida la primera vez que se crea la membresía.
+    // F2.7-E / E1 — Welcome se envía cuando:
+    //   - es alta nueva (no había Membership previo), O
+    //   - el usuario vuelve tras vencimiento (existing.active === false).
+    //
+    // Renovación de membresía ACTIVA NO dispara welcome — el cliente ya
+    // recibió uno cuando arrancó este ciclo.
+    //
+    // La idempotencia real vive en `MembershipNotificationsService`:
+    // sendWelcomeIdempotent inserta un log row con unique key
+    // (membershipId, WELCOME, referenceExpiresAt). Si por race / reintento
+    // el mismo ciclo intenta mandar dos veces, el segundo intento devuelve
+    // SKIPPED_ALREADY_SENT sin reabrir SMTP.
+    const wasInactiveBefore = !existing || !existing.active;
     let welcomeSent = false;
-    if (!existing) {
-      const userInfo = await db.user.findUnique({
-        where: { id: userId },
-        select: { email: true, firstName: true },
+    if (wasInactiveBefore) {
+      const outcome = await this.notifications.sendWelcomeIdempotent({
+        membershipId: upserted.id,
+        userId,
+        referenceExpiresAt: upserted.expiresAt,
+        tx,
       });
-      if (userInfo) {
-        try {
-          await this.emails.sendWelcomeMembership(userInfo.email, {
-            firstName: userInfo.firstName,
-            expiresAt: upserted.expiresAt,
-          });
-          welcomeSent = true;
-        } catch (error) {
-          this.logger.warn(
-            `Welcome email failed for ${userInfo.email}: ${String(error)}`,
-          );
-        }
-      }
+      welcomeSent = outcome === 'SENT';
     }
 
     this.logger.log(
@@ -277,6 +291,28 @@ export class MembershipsService {
         ? args.totalAmount.toNumber()
         : Number(args.totalAmount);
 
+    // F2.8-A / Capa 2 — Claim atómico de aplicación de beneficios.
+    //
+    // CAS sobre `Order.benefitsAppliedAt`: si el campo ya tiene valor, otra
+    // ejecución (race de webhook, retry de admin, doble PATCH) ya aplicó
+    // los side effects → reconstruimos un snapshot leyendo el estado
+    // persistido y retornamos sin tocar nada.
+    //
+    // Importante: este claim debe ser lo PRIMERO. Sucede antes incluso de
+    // chequear si la compra califica — porque si NO califica esta vez, una
+    // ejecución anterior tampoco habrá generado beneficios; el snapshot
+    // resultante refleja eso (membership=null, tickets=0).
+    const claim = await this.prisma.order.updateMany({
+      where: { id: args.orderId, benefitsAppliedAt: null },
+      data: { benefitsAppliedAt: new Date() },
+    });
+    if (claim.count === 0) {
+      this.logger.log(
+        `applyPaidPurchase skipped — order ${args.orderNumber} already processed`,
+      );
+      return this.buildAlreadyAppliedSnapshot(args);
+    }
+
     // (1) Activar o renovar la membresía.
     const { membership, renewed, welcomeSent } = await this.activateOrRenew({
       userId: args.userId,
@@ -286,12 +322,16 @@ export class MembershipsService {
 
     if (!membership) {
       // Compra por debajo del mínimo S/25 — no hay beneficios.
+      // Nota: el claim ya marcó `benefitsAppliedAt` con timestamp; si la
+      // misma orden se re-procesa, irá por el snapshot path. Eso es correcto
+      // — la decisión "no califica" es estable.
       return {
         membership: null,
         renewed: false,
         welcomeSent: false,
         ticketsGranted: 0,
         referralReward: null,
+        alreadyApplied: false,
       };
     }
 
@@ -347,6 +387,19 @@ export class MembershipsService {
     }
 
     // (5) Bono al referente — solo en la primera compra elegible del invitado.
+    //
+    // F2.8-B / Compensating rollback: ordenamos claim → grant → log Y, si grant
+    // no materializa el ticket (no hay sorteo activo / sin asientos / throw),
+    // liberamos el claim del Referral. Sin esto, claim succeeds sin grant
+    // dejaría al referidor sin ticket Y al Referral marcado "rewarded" — el
+    // siguiente intento (otra orden calificada del referido) no podría
+    // re-disparar el bono.
+    //
+    // Por qué claim PRIMERO y no grant primero: si grant fuera primero, una
+    // race de dos órdenes calificadas concurrentes del mismo referido podrían
+    // ambas materializar tickets antes de competir por el CAS de Referral.
+    // El orden actual (claim primero) garantiza single-winner aun en
+    // concurrencia gracias al CAS atómico sobre `Referral.rewarded`.
     let referralReward: ApplyPaidPurchaseResult['referralReward'] = null;
     try {
       // F2.7-C / R6 — pasamos orderCreatedAt para que el guard rechace
@@ -356,25 +409,44 @@ export class MembershipsService {
         orderCreatedAt: args.orderCreatedAt,
       });
       if (claim) {
-        const bonusGranted = await this.raffleTickets.grantToUser({
-          userId: claim.referrerUserId,
-          quantity: 1,
-          entryType: EntryType.BONUS,
-          reference: `referido ${args.orderNumber}`,
-          orderId: args.orderId,
-        });
-        if (bonusGranted > 0) {
-          await this.logBenefit({
+        let materialized = false;
+        try {
+          const bonusGranted = await this.raffleTickets.grantToUser({
             userId: claim.referrerUserId,
+            quantity: 1,
+            entryType: EntryType.BONUS,
+            reference: `referido ${args.orderNumber}`,
             orderId: args.orderId,
-            type: MembershipBenefitType.REFERRAL_BONUS,
-            description: `Bono por referido (${channelLabel} ${args.orderNumber})`,
-            amount: bonusGranted,
           });
-          referralReward = {
-            referrerUserId: claim.referrerUserId,
-            bonusTickets: bonusGranted,
-          };
+          if (bonusGranted > 0) {
+            await this.logBenefit({
+              userId: claim.referrerUserId,
+              orderId: args.orderId,
+              type: MembershipBenefitType.REFERRAL_BONUS,
+              description: `Bono por referido (${channelLabel} ${args.orderNumber})`,
+              amount: bonusGranted,
+            });
+            referralReward = {
+              referrerUserId: claim.referrerUserId,
+              bonusTickets: bonusGranted,
+            };
+            materialized = true;
+          }
+        } finally {
+          if (!materialized) {
+            // F2.8-B — Liberamos el claim para que una orden futura calificada
+            // del mismo referido pueda re-disparar el bono cuando haya sorteo.
+            await this.referrals
+              .releaseClaim({
+                referralId: claim.referralId,
+                expectedReferrerUserId: claim.referrerUserId,
+              })
+              .catch((releaseError) =>
+                this.logger.error(
+                  `Failed to release referral claim for ${args.orderNumber}: ${String(releaseError)}`,
+                ),
+              );
+          }
         }
       }
     } catch (error) {
@@ -389,6 +461,63 @@ export class MembershipsService {
       welcomeSent,
       ticketsGranted: granted,
       referralReward,
+      alreadyApplied: false,
+    };
+  }
+
+  /**
+   * F2.8-A — Reconstruye el resultado para una orden cuyo
+   * `benefitsAppliedAt` ya está set (re-call idempotente).
+   *
+   * No re-ejecuta side effects. Lee:
+   *   - Membership actual del usuario (puede haber sido renovada por otra
+   *     orden posterior — devolvemos el estado vigente, no el histórico).
+   *   - Tickets PURCHASE_REWARD efectivamente otorgados por esta orden.
+   *   - Referral bonus que esta orden disparó (si existió).
+   *
+   * `renewed` y `welcomeSent` no son recuperables con exactitud desde el
+   * estado persistido. Defaulteamos `renewed=false` (semántica del re-call:
+   * no estamos renovando nada ahora) y `welcomeSent=false` (no se envió
+   * email en esta llamada). Los callers que necesiten estos flags deben
+   * consultar `MembershipNotificationLog` o `MembershipBenefitLog`.
+   */
+  private async buildAlreadyAppliedSnapshot(
+    args: ApplyPaidPurchaseArgs,
+  ): Promise<ApplyPaidPurchaseResult> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId: args.userId },
+      select: { id: true, expiresAt: true },
+    });
+
+    const ticketsGranted = await this.prisma.raffleEntry.count({
+      where: {
+        orderId: args.orderId,
+        type: EntryType.PURCHASE_REWARD,
+        status: { in: [EntryStatus.PAID, EntryStatus.PENDING_PAYMENT] },
+      },
+    });
+
+    const referralLog = await this.prisma.membershipBenefitLog.findFirst({
+      where: {
+        orderId: args.orderId,
+        type: MembershipBenefitType.REFERRAL_BONUS,
+      },
+      select: { userId: true, amount: true },
+    });
+    const referralReward = referralLog
+      ? {
+          referrerUserId: referralLog.userId,
+          bonusTickets: referralLog.amount ? referralLog.amount.toNumber() : 0,
+        }
+      : null;
+
+    return {
+      membership,
+      renewed: false,
+      welcomeSent: false,
+      ticketsGranted,
+      referralReward,
+      alreadyApplied: true,
     };
   }
 

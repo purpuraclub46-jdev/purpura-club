@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Container } from "@/shared/ui/container";
+import { MembershipBadge } from "@/shared/ui/membership-badge";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
 import { formatCurrency } from "@/shared/lib/format";
+import { isProductClubEligible } from "@/shared/lib/club-eligibility";
 import {
   ProductCard,
   ProductCardSkeleton,
@@ -264,48 +266,137 @@ export default function ProductDetailPage({ params }: PageProps) {
             {data.name}
           </h1>
 
-          {/* Badges de estado (solo discount + low stock).
-              "Destacado / Premium" se movió a la sección Detalles abajo
-              como característica del producto, no como state indicator. */}
-          {hasDiscount || lowStock ? (
-            <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-[0.18em]">
-              {hasDiscount ? (
-                <span className="inline-flex items-center rounded-full bg-[#0A0A0A] px-2.5 py-1 font-semibold text-white tabular-nums">
-                  −{Math.round(data.discountPercentage ?? 0)}%
-                </span>
-              ) : null}
-              {lowStock ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[#0A0A0A]/70 ring-1 ring-black/10">
-                  <span className="inline-block size-1.5 rounded-full bg-amber-500" />
-                  Últimas {totalStock}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+          {/* Badges de estado (discount + low stock + Club bonus).
+              F2.7-D — Cuando el producto califica para el bonus Club Y
+              tiene promo activa, mostramos el badge "+10% Club" al lado
+              del badge de descuento. "Destacado / Premium" se movió a la
+              sección Detalles abajo como característica del producto. */}
+          {(() => {
+            const clubEligible = isProductClubEligible(data);
+            const showBadges = hasDiscount || lowStock;
+            if (!showBadges) return null;
+            return (
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-[0.18em]">
+                {hasDiscount ? (
+                  <span className="inline-flex items-center rounded-full bg-[#0A0A0A] px-2.5 py-1 font-semibold text-white tabular-nums">
+                    −{Math.round(data.discountPercentage ?? 0)}%
+                  </span>
+                ) : null}
+                {hasDiscount && clubEligible ? (
+                  <MembershipBadge
+                    tone="clubBonus"
+                    size="md"
+                    label="+10% Club"
+                    ariaLabel="Miembros del Club obtienen 10% adicional"
+                  />
+                ) : null}
+                {lowStock ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[#0A0A0A]/70 ring-1 ring-black/10">
+                    <span className="inline-block size-1.5 rounded-full bg-amber-500" />
+                    Últimas {totalStock}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })()}
 
-          {/* Precio limpio (sin desglose IGV) */}
+          {/* Precio + desglose Club.
+              F2.7-D — Si el producto es Club-elegible y hay promo activa,
+              renderizamos un breakdown editorial:
+                Precio regular:   S/100   (tachado)
+                Promo vigente:    −20%
+                Beneficio Club:   +10%
+                ────────────────────────
+                Tu precio:        S/70   (accent)
+              Si NO es elegible o no hay promo, mostramos solo finalPrice
+              + compareAt (comportamiento legacy). El memberPrice solo
+              aparece para socios autenticados (backend D4). */}
           <div className="space-y-2">
-            <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-semibold tabular-nums tracking-tight text-[#0A0A0A]">
-                {formatCurrency(finalPrice)}
-              </span>
-              {compareAt ? (
-                <span className="text-base text-[#0A0A0A]/40 line-through tabular-nums">
-                  {formatCurrency(compareAt)}
-                </span>
-              ) : null}
-            </div>
-            {data.memberPrice && data.memberPrice < finalPrice ? (
-              <p className="inline-flex items-center gap-1.5 text-xs text-[#9810FA]">
-                <Crown className="size-3.5" strokeWidth={1.6} />
-                <span>
-                  Precio miembro Club:{" "}
-                  <strong className="font-semibold tabular-nums">
-                    {formatCurrency(data.memberPrice)}
-                  </strong>
-                </span>
-              </p>
-            ) : null}
+            {(() => {
+              const clubEligible = isProductClubEligible(data);
+              const showBreakdown =
+                hasDiscount &&
+                clubEligible &&
+                data.memberPrice !== null &&
+                data.memberPrice < finalPrice;
+
+              if (showBreakdown && data.memberPrice !== null) {
+                const promoPct = Math.round(data.discountPercentage ?? 0);
+                const totalPct = Math.round(
+                  ((data.price - data.memberPrice) / data.price) * 100,
+                );
+                return (
+                  <div className="space-y-2.5">
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-4xl font-semibold tabular-nums tracking-tight text-[#9810FA]">
+                        {formatCurrency(data.memberPrice)}
+                      </span>
+                      <span className="text-base text-[#0A0A0A]/40 line-through tabular-nums">
+                        {formatCurrency(data.price)}
+                      </span>
+                    </div>
+                    <ul className="space-y-1 rounded-2xl border border-[#9810FA]/15 bg-[#9810FA]/4 p-3 text-[12px]">
+                      <BreakdownRow label="Precio regular">
+                        {formatCurrency(data.price)}
+                      </BreakdownRow>
+                      <BreakdownRow label="Promoción vigente">
+                        −{promoPct}%
+                      </BreakdownRow>
+                      <BreakdownRow label="Beneficio Club" accent>
+                        +10%
+                      </BreakdownRow>
+                      <li className="my-1 border-t border-[#9810FA]/10" />
+                      <BreakdownRow label={`Tu precio socio (−${totalPct}%)`} bold>
+                        {formatCurrency(data.memberPrice)}
+                      </BreakdownRow>
+                    </ul>
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-4xl font-semibold tabular-nums tracking-tight text-[#0A0A0A]">
+                      {formatCurrency(finalPrice)}
+                    </span>
+                    {compareAt ? (
+                      <span className="text-base text-[#0A0A0A]/40 line-through tabular-nums">
+                        {formatCurrency(compareAt)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {data.memberPrice && data.memberPrice < finalPrice ? (
+                    <p className="inline-flex items-center gap-1.5 text-xs text-[#9810FA]">
+                      <Crown className="size-3.5" strokeWidth={1.6} />
+                      <span>
+                        Precio miembro Club:{" "}
+                        <strong className="font-semibold tabular-nums">
+                          {formatCurrency(data.memberPrice)}
+                        </strong>
+                      </span>
+                    </p>
+                  ) : null}
+                  {/* F2.7-D / D4 — Gancho comercial para anónimos / no socios:
+                      cuando el producto es Club-elegible Y hay promo activa
+                      pero el backend no envió memberPrice (el caller no es
+                      socio autenticado), invitamos a activar la membresía sin
+                      revelar el monto exacto. */}
+                  {hasDiscount &&
+                  isProductClubEligible(data) &&
+                  (!data.memberPrice || data.memberPrice >= finalPrice) ? (
+                    <p className="inline-flex items-center gap-1.5 text-xs text-[#9810FA]/80">
+                      <Sparkles className="size-3.5" strokeWidth={1.6} />
+                      <span>
+                        Socios del Club obtienen{" "}
+                        <strong className="font-semibold">10% adicional</strong>{" "}
+                        sobre esta promoción.
+                      </span>
+                    </p>
+                  ) : null}
+                </>
+              );
+            })()}
           </div>
 
           {data.description ? (
@@ -648,5 +739,43 @@ function ProductSkeleton() {
         </div>
       </Container>
     </div>
+  );
+}
+
+/**
+ * F2.7-D — Row del breakdown editorial del PDP. Label tenue + valor
+ * destacado, con variantes `accent` para resaltar el bonus Club y `bold`
+ * para el total. Local al PDP — el desglose vive sólo aquí.
+ */
+function BreakdownRow({
+  label,
+  children,
+  accent,
+  bold,
+}: {
+  label: string;
+  children: React.ReactNode;
+  accent?: boolean;
+  bold?: boolean;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3 tabular-nums">
+      <span
+        className={cn(
+          accent ? "text-[#9810FA]" : "text-[#0A0A0A]/65",
+          bold ? "font-semibold text-[#0A0A0A]" : "font-medium",
+        )}
+      >
+        {label}
+      </span>
+      <span
+        className={cn(
+          accent ? "font-semibold text-[#9810FA]" : "text-[#0A0A0A]",
+          bold && "font-semibold",
+        )}
+      >
+        {children}
+      </span>
+    </li>
   );
 }

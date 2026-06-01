@@ -24,6 +24,7 @@ import { formatCurrency } from "@/shared/lib/format";
 import { toast } from "@/stores/toast.store";
 import { useMyAddresses } from "@/features/account/hooks/use-account";
 import { useAuth } from "@/features/auth/hooks/use-auth";
+import { ClubSavingsCallout } from "@/features/checkout/components/club-savings-callout";
 import { useCreateCheckoutSession } from "@/features/checkout/hooks/use-checkout";
 import {
   selectCartCount,
@@ -433,6 +434,11 @@ function SummaryStep({
           ))}
         </ul>
       </div>
+
+      {/* F2.7-D — Callout del estado Club. Se muestra arriba del resumen
+          monetario para anclar el contexto: "tus beneficios están aplicados"
+          ANTES de revisar el total. */}
+      <ClubSavingsCallout />
 
       <div className="lux-card rounded-2xl p-5 sm:p-6">
         <SectionLabel icon={ShoppingBag} label="Resumen" />

@@ -390,9 +390,33 @@ export class OrdersService {
     // múltiples awaits sobre el pooler pueden hacer perder la transacción
     // (error P2028). Cada paso es idempotente o recuperable manualmente:
     // si la app cae mid-flow, un admin puede reconciliar con el log.
-    const order = await this.prisma.order.update({
-      where: { id },
+    //
+    // F2.8-A / Capa 1 — CAS atómico sobre la transición de status. Sin esto,
+    // dos PATCH concurrentes leen `existing.status=PENDING`, ambos sobreescriben
+    // a PAID y ambos disparan el Membership Engine en setImmediate → side
+    // effects duplicados (stock decrement doble, tickets duplicados, etc.).
+    //
+    // Estrategia: el WHERE incluye `status: existing.status`, así que solo el
+    // primer caller efectúa el cambio. Los demás reciben `count: 0` y
+    // retornan el snapshot actual sin disparar el engine. La invariante de
+    // dominio ("una sola transición canónica") se vuelve el lock.
+    const claim = await this.prisma.order.updateMany({
+      where: { id, status: existing.status },
       data: { status: dto.status },
+    });
+    if (claim.count === 0) {
+      // Otro request ya transicionó esta orden. Retornamos el estado actual
+      // sin tocar stock ni engine — quien ganó la carrera ya se encargará.
+      const current = await this.repository.findById(id);
+      if (!current) throw new NotFoundException('Pedido no encontrado');
+      this.logger.log(
+        `Order ${id} status transition CAS lost (requested ${dto.status}, current ${current.status})`,
+      );
+      return this.toResponse(current);
+    }
+
+    const order = await this.prisma.order.findUniqueOrThrow({
+      where: { id },
       include: this.repository.include,
     });
 

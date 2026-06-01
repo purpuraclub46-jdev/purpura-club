@@ -27,10 +27,8 @@ import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
 import { formatCurrency, formatDate, formatDateTime } from "@/shared/lib/format";
 import { AddressesTab } from "@/features/account/components/addresses-tab";
-import {
-  useMyMembership,
-  useMyOrders,
-} from "@/features/account/hooks/use-account";
+import { MembershipTab } from "@/features/account/components/membership-tab";
+import { useMyOrders } from "@/features/account/hooks/use-account";
 import { useAuth, useLogout } from "@/features/auth/hooks/use-auth";
 import { useMyRaffleEntries } from "@/features/raffles/hooks/use-raffles";
 import { ReferralsTab } from "@/features/referrals/components/referrals-tab";
@@ -548,147 +546,8 @@ function RaffleEntriesTab() {
   );
 }
 
-function MembershipTab() {
-  const { data, isLoading } = useMyMembership();
-
-  if (isLoading) {
-    return (
-      <div className="space-y-3">
-        <SectionHeader title="Membresía" />
-        <Skeleton className="h-40 w-full rounded-2xl" />
-      </div>
-    );
-  }
-
-  const active = data?.active && new Date(data.expiresAt) > new Date();
-
-  return (
-    <div>
-      <SectionHeader
-        title="Membresía del Club"
-        description="Tu nivel actual y fecha de vencimiento."
-      />
-      <div
-        className={cn(
-          "relative isolate overflow-hidden rounded-2xl border p-6 sm:p-8",
-          active
-            ? "border-[#9810FA]/40 bg-[#0A0A0A] text-white"
-            : "border-[#11111114] bg-white",
-        )}
-      >
-        {active ? (
-          <div
-            aria-hidden
-            className="absolute inset-0 opacity-50"
-            style={{
-              background:
-                "radial-gradient(60% 60% at 0% 0%, rgba(152,16,250,0.45) 0%, transparent 60%), radial-gradient(60% 60% at 100% 100%, rgba(192,38,211,0.35) 0%, transparent 60%)",
-            }}
-          />
-        ) : null}
-        <div className="relative space-y-3">
-          <div className="flex items-center gap-2">
-            <Crown
-              className={cn(
-                "size-5",
-                active ? "text-[#9810FA]" : "text-[#0A0A0A]/45",
-              )}
-            />
-            <span
-              className={cn(
-                "text-[10px] font-semibold uppercase tracking-[0.28em]",
-                active ? "text-[#9810FA]" : "text-[#0A0A0A]/45",
-              )}
-            >
-              {active ? "Miembro activo" : "Sin membresía activa"}
-            </span>
-          </div>
-          <h2
-            className={cn(
-              "font-serif text-3xl tracking-tight",
-              active ? "text-white" : "text-[#0A0A0A]",
-            )}
-          >
-            Club Púrpura
-          </h2>
-          {active && data ? (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Stat
-                label="Activa desde"
-                value={formatDate(data.startedAt)}
-                dark
-              />
-              <Stat
-                label="Vence"
-                value={formatDate(data.expiresAt)}
-                dark
-              />
-              <Stat
-                label="Última compra"
-                value={
-                  data.lastPurchaseAt
-                    ? formatDate(data.lastPurchaseAt)
-                    : "—"
-                }
-                dark
-              />
-            </div>
-          ) : (
-            <p className="text-sm text-[#0A0A0A]/55">
-              Realiza una compra calificada para activar tu membresía y empezar a
-              recibir beneficios.
-            </p>
-          )}
-          {!active ? (
-            <Link href="/shop">
-              <Button className="mt-2">Activar comprando</Button>
-            </Link>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  dark,
-}: {
-  label: string;
-  value: string;
-  dark?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-xl border p-3",
-        dark
-          ? "border-white/10 bg-white/5"
-          : "border-[#11111114] bg-white",
-      )}
-    >
-      <p
-        className={cn(
-          "text-[10px] font-semibold uppercase tracking-[0.18em]",
-          dark ? "text-white/55" : "text-[#0A0A0A]/45",
-        )}
-      >
-        {label}
-      </p>
-      <p
-        className={cn(
-          "mt-1 text-sm font-medium",
-          dark ? "text-white" : "text-[#0A0A0A]",
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-// FASE 2 / F2.5 — La implementación real vive en
-// features/account/components/addresses-tab.tsx para mantener acotado el
-// blast radius. Aquí solo se importa y se renderiza dentro del switch
-// del tab activo.
+// F2.7-D / D10 — `MembershipTab` se extrajo a
+// features/account/components/membership-tab.tsx y se reescribió completo
+// (countdown + benefits list + expiry hint). Se importa arriba.
+//
+// F2.5 — `AddressesTab` vive también en features/account/components/.

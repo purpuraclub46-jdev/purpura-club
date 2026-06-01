@@ -7,6 +7,7 @@ import {
   Minus,
   Plus,
   ShoppingBag,
+  Sparkles,
   Ticket,
   X,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   type CartItem,
 } from "@/stores/cart.store";
 import { useAuth } from "@/features/auth/hooks/use-auth";
+import { useMembershipState } from "@/features/account/hooks/use-membership-state";
 
 export function CartDrawer() {
   const items = useCartStore((s) => s.items);
@@ -39,6 +41,14 @@ export function CartDrawer() {
   const gross = useCartStore(selectCartGross);
   const breakdown = splitGross(gross);
   const { isAuthenticated } = useAuth();
+  // F2.7-D / D8 — Hint sutil sólo para NO socios con al menos un item.
+  // No discriminamos por categoría: el storefront no almacena el group de
+  // cada item en el cart store (legacy persistente). El mensaje es
+  // genérico y honesto — el descuento real se aplica solo si el producto
+  // es elegible (JOYERIA/PERFUMES).
+  const membership = useMembershipState();
+  const showClubHint =
+    !membership.isMember && membership.status !== "loading" && items.length > 0;
 
   const isEmpty = items.length === 0;
   const totalUnits = items.reduce((acc, i) => acc + i.quantity, 0);
@@ -127,6 +137,7 @@ export function CartDrawer() {
                 breakdown={breakdown}
                 onCheckout={handleCheckout}
                 onContinue={close}
+                showClubHint={showClubHint}
               />
             ) : null}
           </motion.aside>
@@ -431,13 +442,35 @@ function Summary({
   breakdown,
   onCheckout,
   onContinue,
+  showClubHint,
 }: {
   breakdown: ReturnType<typeof splitGross>;
   onCheckout: () => void;
   onContinue: () => void;
+  showClubHint: boolean;
 }) {
   return (
     <footer className="sticky bottom-0 border-t border-[#1111110d] bg-white px-5 pb-4 pt-3.5 shadow-[0_-12px_30px_-20px_rgba(17,17,17,0.14)]">
+      {/* F2.7-D / D8 — Hint mínimo para no socios. CTA hacia /mi-cuenta?tab=membresia
+          desde donde puede activar la membresía. Discreto, sin botón propio. */}
+      {showClubHint ? (
+        <Link
+          href="/mi-cuenta?tab=membresia"
+          onClick={onContinue}
+          className="mb-3 flex items-start gap-2 rounded-xl border border-[#9810FA]/15 bg-[#9810FA]/4 px-3 py-2.5 text-[11.5px] text-[#0A0A0A]/75 transition-colors hover:bg-[#9810FA]/8"
+        >
+          <Sparkles
+            className="mt-0.5 size-3.5 shrink-0 text-[#9810FA]"
+            strokeWidth={1.6}
+          />
+          <span>
+            Activa{" "}
+            <strong className="font-semibold text-[#9810FA]">Púrpura Club</strong>{" "}
+            y ahorra 10% adicional en Joyería y Perfumes.
+          </span>
+        </Link>
+      ) : null}
+
       {/*
         Resumen luxury — sin desglose tributario visible al cliente.
         El cálculo fiscal (IGV) sigue intacto en `breakdown` y se imprime
